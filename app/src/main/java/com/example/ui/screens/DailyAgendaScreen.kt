@@ -30,8 +30,10 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.dto.ContactWithDetails
 import com.example.data.model.InteractionType
+import com.example.data.sync.SystemContactHelper
 import com.example.data.ui.viewmodel.AgendaSortOption
 import com.example.data.ui.viewmodel.MainViewModel
+import coil.compose.AsyncImage
 import com.example.ui.components.TagChip
 import com.example.ui.theme.OverdueRed
 import com.example.ui.theme.SuccessGreen
@@ -517,6 +519,18 @@ fun AgendaContactSwipeItem(
 ) {
     var isExpanded by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val (phoneDetails, fetchedPhotoUri) = remember(item) {
+        SystemContactHelper.fetchPhoneDetailsAndPhoto(
+            context = context,
+            systemContactId = item.contact.systemContactId,
+            lookupKey = item.contact.lookupKey,
+            fallbackPhoneNumber = item.contact.phoneNumber,
+            fallbackSecondaryNumbers = item.contact.secondaryNumbers
+        )
+    }
+    val displayPhotoUri = item.contact.avatarUri ?: fetchedPhotoUri
+
     val coroutineScope = rememberCoroutineScope()
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
@@ -590,25 +604,36 @@ fun AgendaContactSwipeItem(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Avatar circle
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (item.isSnoozed()) WarningAmber.copy(alpha = 0.25f)
-                                else MaterialTheme.colorScheme.primaryContainer
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (item.isSnoozed()) {
-                            Icon(Icons.Default.Snooze, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(20.dp))
-                        } else {
-                            Text(
-                                text = item.contact.name.take(1).uppercase(),
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                    if (!displayPhotoUri.isNullOrBlank()) {
+                        AsyncImage(
+                            model = displayPhotoUri,
+                            contentDescription = "${item.contact.name} avatar",
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (item.isSnoozed()) WarningAmber.copy(alpha = 0.25f)
+                                    else MaterialTheme.colorScheme.primaryContainer
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (item.isSnoozed()) {
+                                Icon(Icons.Default.Snooze, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(20.dp))
+                            } else {
+                                Text(
+                                    text = item.contact.name.take(1).uppercase(),
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
                     }
 

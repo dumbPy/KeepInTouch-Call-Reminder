@@ -45,14 +45,26 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val namesText = if (contactNames.isNotEmpty()) {
-            contactNames.take(3).joinToString(", ") + if (contactNames.size > 3) " and ${contactNames.size - 3} more" else ""
+        val collapsedText = if (pendingCount > 0) {
+            val top2 = contactNames.take(2).joinToString(", ")
+            val suffix = if (pendingCount > 2) ", ..." else ""
+            "$pendingCount contact(s) on agenda: $top2$suffix"
         } else {
             "All caught up! No pending calls for today."
         }
 
-        val contentText = if (pendingCount > 0) {
-            "$pendingCount call(s) due today: $namesText"
+        val expandedText = if (pendingCount > 0) {
+            val top5 = contactNames.take(5)
+            val sb = StringBuilder()
+            sb.append("Contacts due on agenda ($pendingCount):\n")
+            top5.forEach { name ->
+                sb.append("• ").append(name).append("\n")
+            }
+            val remaining = pendingCount - top5.size
+            if (remaining > 0) {
+                sb.append("+ $remaining others")
+            }
+            sb.toString().trim()
         } else {
             "Great job! You have no overdue or pending calls today."
         }
@@ -60,8 +72,8 @@ object NotificationHelper {
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_call)
             .setContentTitle(if (pendingCount > 0) "📞 Daily Call Agenda ($pendingCount Due)" else "📞 Daily Call Agenda")
-            .setContentText(contentText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
+            .setContentText(collapsedText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(expandedText))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)

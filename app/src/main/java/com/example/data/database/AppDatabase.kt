@@ -20,7 +20,7 @@ import com.example.data.model.TagEntity
         ContactTagCrossRef::class,
         InteractionLogEntity::class
     ],
-    version = 1,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

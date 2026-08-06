@@ -43,4 +43,13 @@ interface ContactDao {
 
     @Query("SELECT * FROM contacts WHERE phoneNumber = :phoneNumber LIMIT 1")
     suspend fun findByPhoneNumber(phoneNumber: String): ContactEntity?
+
+    @Query("UPDATE interaction_logs SET contactId = :targetContactId WHERE contactId = :sourceContactId")
+    suspend fun transferInteractionLogs(sourceContactId: Long, targetContactId: Long)
+
+    @Query("UPDATE OR IGNORE contact_tag_cross_ref SET contactId = :targetContactId WHERE contactId = :sourceContactId")
+    suspend fun transferTagCrossRefs(sourceContactId: Long, targetContactId: Long)
+
+    @Query("DELETE FROM contacts WHERE id = :contactId")
+    suspend fun deleteContactById(contactId: Long)
 }

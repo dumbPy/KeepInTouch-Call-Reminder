@@ -27,9 +27,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import coil.compose.AsyncImage
 import com.example.data.dto.ContactWithDetails
 import com.example.data.model.TagCategory
 import com.example.data.model.TagEntity
+import com.example.data.sync.SystemContactHelper
 import com.example.data.ui.viewmodel.MainViewModel
 import com.example.ui.components.TagChip
 
@@ -57,11 +61,11 @@ fun TagsManagementScreen(
     if (activeSelectedTag != null) {
         TagContactsSelectionPage(
             tag = activeSelectedTag,
+            allTags = allTags,
             allContacts = allContacts,
             onBack = { selectedTagForContacts = null },
             onSave = { selectedIds ->
                 viewModel.updateContactsForTag(activeSelectedTag.id, selectedIds)
-                selectedTagForContacts = null
             }
         )
         return
@@ -332,25 +336,59 @@ fun TagManagementRowItem(
 @Composable
 fun TagContactsSelectionPage(
     tag: TagEntity,
+    allTags: List<TagEntity>,
     allContacts: List<ContactWithDetails>,
     onBack: () -> Unit,
     onSave: (List<Long>) -> Unit
 ) {
-    var searchQuery by remember { mutableStateOf("") }
-    val initialAssigned = remember(tag, allContacts) {
-        allContacts.filter { c -> c.tags.any { it.id == tag.id } }.map { it.contact.id }
+    var showAddContactsPage by remember { mutableStateOf(false) }
+    
+    // Track assigned contact IDs for this tag
+    val currentAssignedIds = remember(tag, allContacts) {
+        allContacts.filter { c -> c.tags.any { it.id == tag.id } }.map { it.contact.id }.toMutableStateList()
     }
-    val selectedContactIds = remember { mutableStateListOf<Long>().apply { addAll(initialAssigned) } }
 
-    val filteredContacts = remember(allContacts, searchQuery) {
-        if (searchQuery.isBlank()) {
-            allContacts
-        } else {
-            allContacts.filter { item ->
-                item.contact.name.contains(searchQuery, ignoreCase = true) ||
-                        item.contact.phoneNumber.contains(searchQuery, ignoreCase = true)
+    if (showAddContactsPage) {
+        AddContactsToTagSelectionView(
+            tag = tag,
+            allTags = allTags,
+            allContacts = allContacts,
+            initialSelectedIds = currentAssignedIds.toList(),
+            onBack = { showAddContactsPage = false },
+            onConfirmSelection = { selectedIds ->
+                currentAssignedIds.clear()
+                currentAssignedIds.addAll(selectedIds)
+                onSave(currentAssignedIds.toList())
+                showAddContactsPage = false
             }
-        }
+        )
+    } else {
+        TagMembersDetailView(
+            tag = tag,
+            allContacts = allContacts,
+            assignedContactIds = currentAssignedIds.toList(),
+            onBack = onBack,
+            onAddContactsClick = { showAddContactsPage = true },
+            onRemoveContact = { contactId ->
+                currentAssignedIds.remove(contactId)
+                onSave(currentAssignedIds.toList())
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TagMembersDetailView(
+    tag: TagEntity,
+    allContacts: List<ContactWithDetails>,
+    assignedContactIds: List<Long>,
+    onBack: () -> Unit,
+    onAddContactsClick: () -> Unit,
+    onRemoveContact: (Long) -> Unit
+) {
+    val assignedContacts = remember(allContacts, assignedContactIds) {
+        allContacts.filter { assignedContactIds.contains(it.contact.id) }
     }
 
     val tagColor = try {
@@ -365,12 +403,12 @@ fun TagContactsSelectionPage(
                 title = {
                     Column {
                         Text(
-                            text = "Contacts for '${tag.name}'",
+                            text = "'${tag.name}' Members",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
+                            fontSize = 18.sp
                         )
                         Text(
-                            text = "${tag.category.displayName} • ${selectedContactIds.size} of ${allContacts.size} selected",
+                            text = "${tag.category.displayName} • ${assignedContacts.size} member(s)",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -378,7 +416,266 @@ fun TagContactsSelectionPage(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back to Tags")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back to Tags Manager")
+                    }
+                }
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = onAddContactsClick,
+                icon = { Icon(Icons.Default.PersonAdd, contentDescription = "Add Contacts") },
+                text = { Text("Add Contacts") }
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            // Tag Header Info Banner
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                color = tagColor.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(tagColor)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "${tag.category.singleSettingLabel}: ${tag.singleValue}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = "Showing members currently assigned to '${tag.name}'. Click 'Add Contacts' to select individual users or auto-import from other tags.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            }
+
+            if (assignedContacts.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Group,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No contacts assigned to '${tag.name}'",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Tap 'Add Contacts' below to assign contacts or import members from another tag.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Button(onClick = onAddContactsClick) {
+                            Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Add Contacts to Tag")
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(assignedContacts, key = { it.contact.id }) { item ->
+                        val context = LocalContext.current
+                        val (phoneDetails, fetchedPhotoUri) = remember(item) {
+                            SystemContactHelper.fetchPhoneDetailsAndPhoto(
+                                context = context,
+                                systemContactId = item.contact.systemContactId,
+                                lookupKey = item.contact.lookupKey,
+                                fallbackPhoneNumber = item.contact.phoneNumber,
+                                fallbackSecondaryNumbers = item.contact.secondaryNumbers
+                            )
+                        }
+                        val photoUri = item.contact.avatarUri ?: fetchedPhotoUri
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (!photoUri.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = photoUri,
+                                        contentDescription = "${item.contact.name} avatar",
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = item.contact.name.take(1).uppercase(),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 18.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(12.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.contact.name,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp
+                                    )
+                                    val primaryDetail = phoneDetails.firstOrNull()
+                                    val phoneText = if (phoneDetails.size > 1 && primaryDetail != null) {
+                                        "${primaryDetail.label}: ${primaryDetail.number} (+${phoneDetails.size - 1} more)"
+                                    } else if (primaryDetail != null) {
+                                        "${primaryDetail.label}: ${primaryDetail.number}"
+                                    } else {
+                                        item.contact.phoneNumber
+                                    }
+
+                                    Text(
+                                        text = phoneText,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (item.tags.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            item.tags.forEach { existingTag ->
+                                                TagChip(tag = existingTag)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                IconButton(onClick = { onRemoveContact(item.contact.id) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove from Tag",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddContactsToTagSelectionView(
+    tag: TagEntity,
+    allTags: List<TagEntity>,
+    allContacts: List<ContactWithDetails>,
+    initialSelectedIds: List<Long>,
+    onBack: () -> Unit,
+    onConfirmSelection: (List<Long>) -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    val selectedContactIds = remember { mutableStateListOf<Long>().apply { addAll(initialSelectedIds) } }
+    var autoSelectedNotification by remember { mutableStateOf<String?>(null) }
+
+    // Other tags available for auto-selecting members
+    val otherTags = remember(allTags, tag) {
+        allTags.filter { it.id != tag.id }
+    }
+
+    val matchingOtherTags = remember(otherTags, searchQuery) {
+        if (searchQuery.isBlank()) {
+            otherTags
+        } else {
+            otherTags.filter {
+                it.name.contains(searchQuery, ignoreCase = true) ||
+                        it.category.displayName.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
+    // Contact filtering by name, phone, or assigned tags
+    val filteredContacts = remember(allContacts, searchQuery) {
+        if (searchQuery.isBlank()) {
+            allContacts
+        } else {
+            allContacts.filter { item ->
+                item.contact.name.contains(searchQuery, ignoreCase = true) ||
+                        item.contact.getAllPhoneNumbers().any { it.contains(searchQuery) } ||
+                        item.tags.any { it.name.contains(searchQuery, ignoreCase = true) }
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "Add Members to '${tag.name}'",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp
+                        )
+                        Text(
+                            text = "${selectedContactIds.size} of ${allContacts.size} contacts selected",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Cancel")
                     }
                 },
                 actions = {
@@ -417,12 +714,12 @@ fun TagContactsSelectionPage(
                     }
 
                     Button(
-                        onClick = { onSave(selectedContactIds.toList()) },
+                        onClick = { onConfirmSelection(selectedContactIds.toList()) },
                         modifier = Modifier.weight(2f)
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Save Contacts (${selectedContactIds.size})")
+                        Text("Save (${selectedContactIds.size})")
                     }
                 }
             }
@@ -433,14 +730,14 @@ fun TagContactsSelectionPage(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Search Bar
+            // Search Input Bar
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Search contact name or phone...") },
+                placeholder = { Text("Search contact name, phone, or tag (e.g. 'Family')...") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -453,36 +750,94 @@ fun TagContactsSelectionPage(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            // Guidance Banner
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                color = tagColor.copy(alpha = 0.12f),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            // Auto-selection feedback snackbar
+            autoSelectedNotification?.let { msg ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(tagColor)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = if (tag.category == TagCategory.GROUPING)
-                            "Group Tag: Select contacts to include in '${tag.name}'."
-                        else
-                            "Single-Setting Tag (${tag.category.displayName}): Assigning this tag replaces any previous ${tag.category.displayName} tag for selected contacts.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = msg,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        IconButton(
+                            onClick = { autoSelectedNotification = null },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+                        }
+                    }
                 }
             }
 
+            // Tag Quick-Select / Import Chips Row
+            if (matchingOtherTags.isNotEmpty()) {
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    Text(
+                        text = "Auto-select members from Tag:",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                    )
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        items(matchingOtherTags, key = { it.id }) { otherTag ->
+                            val members = remember(allContacts, otherTag) {
+                                allContacts.filter { c -> c.tags.any { it.id == otherTag.id } }
+                            }
+                            val memberIds = members.map { it.contact.id }
+                            val allMembersSelected = memberIds.isNotEmpty() && memberIds.all { selectedContactIds.contains(it) }
+
+                            FilterChip(
+                                selected = allMembersSelected,
+                                onClick = {
+                                    if (allMembersSelected) {
+                                        // Deselect members from this tag
+                                        selectedContactIds.removeAll(memberIds)
+                                        autoSelectedNotification = "Removed ${members.size} contact(s) from '${otherTag.name}'"
+                                    } else {
+                                        // Auto-select all members belonging to this tag
+                                        var newlyAdded = 0
+                                        memberIds.forEach { id ->
+                                            if (!selectedContactIds.contains(id)) {
+                                                selectedContactIds.add(id)
+                                                newlyAdded++
+                                            }
+                                        }
+                                        autoSelectedNotification = "Auto-selected ${members.size} member(s) from '${otherTag.name}' tag"
+                                    }
+                                },
+                                label = { Text("${otherTag.name} (${members.size})") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (allMembersSelected) Icons.Default.Check else Icons.Default.Group,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // All Contacts Checkbox List
             if (filteredContacts.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -491,7 +846,7 @@ fun TagContactsSelectionPage(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = if (searchQuery.isNotBlank()) "No contacts match '$searchQuery'" else "No contacts available.",
+                        text = if (searchQuery.isNotBlank()) "No contacts or tags match '$searchQuery'" else "No contacts available in database.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 14.sp
                     )
@@ -529,20 +884,42 @@ fun TagContactsSelectionPage(
                                     .padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Avatar Circle
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = item.contact.name.take(1).uppercase(),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 16.sp,
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+                                val context = LocalContext.current
+                                val (phoneDetails, fetchedPhotoUri) = remember(item) {
+                                    SystemContactHelper.fetchPhoneDetailsAndPhoto(
+                                        context = context,
+                                        systemContactId = item.contact.systemContactId,
+                                        lookupKey = item.contact.lookupKey,
+                                        fallbackPhoneNumber = item.contact.phoneNumber,
+                                        fallbackSecondaryNumbers = item.contact.secondaryNumbers
                                     )
+                                }
+                                val photoUri = item.contact.avatarUri ?: fetchedPhotoUri
+
+                                if (!photoUri.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = photoUri,
+                                        contentDescription = "${item.contact.name} avatar",
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = item.contact.name.take(1).uppercase(),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -553,17 +930,28 @@ fun TagContactsSelectionPage(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 15.sp
                                     )
+                                    val primaryDetail = phoneDetails.firstOrNull()
+                                    val phoneText = if (phoneDetails.size > 1 && primaryDetail != null) {
+                                        "${primaryDetail.label}: ${primaryDetail.number} (+${phoneDetails.size - 1} more)"
+                                    } else if (primaryDetail != null) {
+                                        "${primaryDetail.label}: ${primaryDetail.number}"
+                                    } else {
+                                        item.contact.phoneNumber
+                                    }
+
                                     Text(
-                                        text = item.contact.phoneNumber,
+                                        text = phoneText,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     if (item.tags.isNotEmpty()) {
-                                        Row(
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
                                             horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
                                             modifier = Modifier.padding(top = 4.dp)
                                         ) {
-                                            item.tags.take(3).forEach { existingTag ->
+                                            item.tags.forEach { existingTag ->
                                                 TagChip(tag = existingTag)
                                             }
                                         }

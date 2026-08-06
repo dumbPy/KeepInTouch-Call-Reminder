@@ -35,15 +35,19 @@ data class ContactWithDetails(
 ) {
     /**
      * Resolves effective recurrence frequency in days for this contact.
-     * Looks for FREQUENCY tag; if none, uses customFrequencyDays, or defaults to 14 days.
+     * Returns null if no FREQUENCY tag is assigned and no customFrequencyDays is set.
      */
-    fun resolvedFrequencyDays(): Int {
+    fun resolvedFrequencyDays(): Int? {
         val freqTag = tags.firstOrNull { it.category == TagCategory.FREQUENCY }
         if (freqTag != null) {
             val parsed = freqTag.singleValue.toIntOrNull()
             if (parsed != null && parsed > 0) return parsed
         }
-        return contact.customFrequencyDays ?: 14
+        return contact.customFrequencyDays
+    }
+
+    fun hasFrequencyTracked(): Boolean {
+        return resolvedFrequencyDays() != null
     }
 
     /**
@@ -78,7 +82,7 @@ data class ContactWithDetails(
      */
     fun standardDueTimestamp(): Long {
         val effectiveLastTime = latestTouchpointTimestamp() ?: contact.createdAt
-        val freqDays = resolvedFrequencyDays()
+        val freqDays = resolvedFrequencyDays() ?: 14
         return effectiveLastTime + (freqDays * 86_400_000L)
     }
 

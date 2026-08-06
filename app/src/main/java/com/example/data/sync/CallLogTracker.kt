@@ -53,7 +53,51 @@ class CallLogTracker(
     }
 
     /**
+     * Deduplicates contacts in database by merging contacts with identical names or matching numbers.
+     */
+    suspend fun deduplicateContactsInDatabase(): Int = withContext(Dispatchers.IO) {
+        val all = contactDao.getAllContactsWithDetails()
+        if (all.size < 2) return@withContext 0
+
+        var mergedCount = 0
+        // Group contacts by normalized name (lowercase trimmed)
+        val nameGroups = all.groupBy { it.contact.name.trim().lowercase() }
+
+        for ((_, group) in nameGroups) {
+            if (group.size > 1) {
+                val primary = group.minByOrNull { it.contact.id } ?: continue
+                val duplicates = group.filter { it.contact.id != primary.contact.id }
+
+                val combinedNumbers = mutableListOf<String>()
+                combinedNumbers.addAll(primary.contact.getAllPhoneNumbers())
+                duplicates.forEach { dup ->
+                    combinedNumbers.addAll(dup.contact.getAllPhoneNumbers())
+                }
+                val distinctNumbers = combinedNumbers.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
+                val newPrimaryNumber = distinctNumbers.firstOrNull() ?: primary.contact.phoneNumber
+                val newSecondaryNumbers = if (distinctNumbers.size > 1) distinctNumbers.drop(1).joinToString(", ") else null
+
+                val updatedPrimary = primary.contact.copy(
+                    phoneNumber = newPrimaryNumber,
+                    secondaryNumbers = newSecondaryNumbers
+                )
+                contactDao.updateContact(updatedPrimary)
+
+                for (dup in duplicates) {
+                    contactDao.transferTagCrossRefs(dup.contact.id, primary.contact.id)
+                    contactDao.transferInteractionLogs(dup.contact.id, primary.contact.id)
+                    contactDao.deleteContactById(dup.contact.id)
+                    mergedCount++
+                }
+            }
+        }
+        return@withContext mergedCount
+    }
+
+    /**
      * Imports system contacts from phonebook into Room if READ_CONTACTS permission is granted.
+     * Groups multiple numbers for the same person under a single contact record with system contact ID & photo URI.
      */
     suspend fun importSystemContacts(): Int = withContext(Dispatchers.IO) {
         if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CONTACTS)
@@ -62,14 +106,30 @@ class CallLogTracker(
             return@withContext 0
         }
 
+        // First deduplicate any existing duplicates in Room
+        deduplicateContactsInDatabase()
+        removeSampleContacts()
+
         var imported = 0
-        val allExisting = contactDao.getAllContactsWithDetails()
+
+        data class SystemGroupData(
+            val contactId: Long,
+            val lookupKey: String?,
+            val name: String,
+            val photoUri: String?,
+            val numbers: MutableList<String> = mutableListOf()
+        )
+
+        val systemContactGroups = mutableMapOf<Long, SystemGroupData>()
 
         val cursor = context.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(
+                ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+                ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY,
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER
+                ContactsContract.CommonDataKinds.Phone.NUMBER,
+                ContactsContract.CommonDataKinds.Phone.PHOTO_URI
             ),
             null,
             null,
@@ -77,27 +137,88 @@ class CallLogTracker(
         )
 
         cursor?.use {
+            val contactIdIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+            val lookupKeyIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY)
             val nameIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
             val numberIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+            val photoIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
 
             while (it.moveToNext()) {
+                val cId = if (contactIdIdx != -1) it.getLong(contactIdIdx) else 0L
+                val lookupKey = if (lookupKeyIdx != -1) it.getString(lookupKeyIdx) else null
                 val name = it.getString(nameIdx) ?: continue
                 val rawNumber = it.getString(numberIdx) ?: continue
+                val photoUri = if (photoIdx != -1) it.getString(photoIdx) else null
+
                 val normalized = normalizePhoneNumber(rawNumber)
                 if (normalized.isBlank()) continue
 
-                val exists = allExisting.any { c -> isPhoneMatch(c.contact.phoneNumber, rawNumber) }
-                if (!exists) {
-                    contactDao.insertContact(
-                        ContactEntity(
-                            name = name,
-                            phoneNumber = rawNumber,
-                            notes = "Imported from System Contacts",
-                            lastCalledTimestamp = null
-                        )
+                val groupKey = if (cId > 0) cId else name.hashCode().toLong()
+                val group = systemContactGroups.getOrPut(groupKey) {
+                    SystemGroupData(
+                        contactId = cId,
+                        lookupKey = lookupKey,
+                        name = name.trim(),
+                        photoUri = photoUri
                     )
-                    imported++
                 }
+
+                if (!group.numbers.contains(rawNumber.trim())) {
+                    group.numbers.add(rawNumber.trim())
+                }
+            }
+        }
+
+        val allExisting = contactDao.getAllContactsWithDetails()
+
+        for ((_, group) in systemContactGroups) {
+            if (group.numbers.isEmpty()) continue
+
+            // Check if contact already exists by system contact ID, lookup key, name or phone numbers
+            val existingContact = allExisting.firstOrNull { c ->
+                (group.lookupKey != null && c.contact.lookupKey == group.lookupKey) ||
+                        (group.contactId > 0 && c.contact.systemContactId == group.contactId) ||
+                        c.contact.name.equals(group.name, ignoreCase = true) ||
+                        group.numbers.any { num -> c.contact.getAllPhoneNumbers().any { existingNum -> isPhoneMatch(existingNum, num) } }
+            }
+
+            if (existingContact != null) {
+                // Update system identifiers, photo URI and secondary numbers if needed
+                val currentNums = existingContact.contact.getAllPhoneNumbers().toMutableList()
+                var updated = false
+                for (num in group.numbers) {
+                    if (!currentNums.any { isPhoneMatch(it, num) }) {
+                        currentNums.add(num)
+                        updated = true
+                    }
+                }
+                val sec = if (currentNums.size > 1) currentNums.drop(1).joinToString(", ") else null
+                val updatedContact = existingContact.contact.copy(
+                    systemContactId = if (group.contactId > 0) group.contactId else existingContact.contact.systemContactId,
+                    lookupKey = group.lookupKey ?: existingContact.contact.lookupKey,
+                    avatarUri = group.photoUri ?: existingContact.contact.avatarUri,
+                    secondaryNumbers = sec
+                )
+                if (updatedContact != existingContact.contact) {
+                    contactDao.updateContact(updatedContact)
+                }
+            } else {
+                // Create single new contact entry for this system contact
+                val primaryNum = group.numbers.first()
+                val secNums = if (group.numbers.size > 1) group.numbers.drop(1).joinToString(", ") else null
+                contactDao.insertContact(
+                    ContactEntity(
+                        systemContactId = if (group.contactId > 0) group.contactId else null,
+                        lookupKey = group.lookupKey,
+                        name = group.name,
+                        phoneNumber = primaryNum,
+                        secondaryNumbers = secNums,
+                        avatarUri = group.photoUri,
+                        notes = "Imported from System Contacts",
+                        lastCalledTimestamp = null
+                    )
+                )
+                imported++
             }
         }
         return@withContext imported
@@ -160,9 +281,9 @@ class CallLogTracker(
                 val duration = it.getLong(durationIdx)
                 val callType = it.getInt(typeIdx)
 
-                // Find matching contact in database
+                // Find matching contact in database by checking primary and secondary numbers
                 val contactDetails = allContactsWithDetails.firstOrNull { c ->
-                    isPhoneMatch(c.contact.phoneNumber, rawNumber)
+                    c.contact.getAllPhoneNumbers().any { num -> isPhoneMatch(num, rawNumber) }
                 } ?: continue
 
                 val contact = contactDetails.contact

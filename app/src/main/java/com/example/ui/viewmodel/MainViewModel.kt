@@ -41,12 +41,15 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
     val allTags: StateFlow<List<TagEntity>> = repository.allTags
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val allContactsWithDetails: StateFlow<List<ContactWithDetails>> =
+    val allContactsWithDetails: StateFlow<List<ContactWithDetails>> = repository.allContactsWithDetails
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val filteredContactsWithDetails: StateFlow<List<ContactWithDetails>> =
         combine(repository.allContactsWithDetails, _searchQuery, _selectedTagFilter, _contactSortOption) { list, query, tag, sortOpt ->
             val filtered = list.filter { item ->
                 val matchesQuery = query.isBlank() ||
                         item.contact.name.contains(query, ignoreCase = true) ||
-                        item.contact.phoneNumber.contains(query)
+                        item.contact.getAllPhoneNumbers().any { it.contains(query) }
                 val matchesTag = tag == null || item.tags.any { it.id == tag.id }
                 matchesQuery && matchesTag
             }
@@ -68,24 +71,25 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
         _lookaheadDays.value = days
     }
 
-    // Due & Overdue Contacts (Not Snoozed / Snooze Expired)
+    // Due & Overdue Contacts (Must have frequency tracked, Not Snoozed / Snooze Expired)
     val dueAgendaList: StateFlow<List<ContactWithDetails>> = combine(
         repository.allContactsWithDetails,
         _sortOptions
     ) { list, options ->
         val filtered = list.filter { item ->
-            !item.isSnoozed() && item.daysUntilDue() <= 0
+            item.hasFrequencyTracked() && !item.isSnoozed() && item.daysUntilDue() <= 0
         }
         sortAgendaContacts(filtered, options)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Combined Upcoming & Snoozed Contacts (Next N Lookahead Days)
+    // Combined Upcoming & Snoozed Contacts (Next N Lookahead Days, Must have frequency tracked)
     val upcomingAndSnoozedAgendaList: StateFlow<List<ContactWithDetails>> = combine(
         repository.allContactsWithDetails,
         _lookaheadDays,
         _sortOptions
     ) { list, lookahead, options ->
         val filtered = list.filter { item ->
+            if (!item.hasFrequencyTracked()) return@filter false
             val days = item.daysUntilDue()
             if (item.isSnoozed()) {
                 days <= lookahead
@@ -106,7 +110,7 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
             val comp: Comparator<ContactWithDetails> = when (opt) {
                 AgendaSortOption.OVERDUE_DAYS -> compareBy { it.daysUntilDue() }
                 AgendaSortOption.PRIORITY_WEIGHT -> compareByDescending { it.priorityWeight() }
-                AgendaSortOption.FREQUENCY -> compareBy { it.resolvedFrequencyDays() }
+                AgendaSortOption.FREQUENCY -> compareBy { it.resolvedFrequencyDays() ?: Int.MAX_VALUE }
                 AgendaSortOption.NAME -> compareBy { it.contact.name.lowercase() }
             }
             comparator = if (comparator == null) comp else comparator.then(comp)

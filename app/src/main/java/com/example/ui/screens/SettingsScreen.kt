@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -49,6 +50,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val agendaList by viewModel.dailyAgendaList.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
 
     var callLogPermissionGranted by remember {
         mutableStateOf(
@@ -69,6 +71,9 @@ fun SettingsScreen(
             } else true
         )
     }
+
+    val allPermissionsGranted = callLogPermissionGranted && contactsPermissionGranted && notificationsPermissionGranted
+    var isPermissionsExpanded by remember { mutableStateOf(!allPermissionsGranted) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -133,139 +138,185 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isPermissionsExpanded = !isPermissionsExpanded },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.weight(1f, fill = false),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Icon(Icons.Default.Security, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("System Permissions", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            }
-
-                            TextButton(onClick = { openSystemAppSettings() }) {
-                                Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("App Settings", fontSize = 12.sp)
-                            }
-                        }
-
-                        Text(
-                            text = "Tap a permission to grant it or open system app settings page directly.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        // Call Log Permission
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    if (!callLogPermissionGranted) {
-                                        permissionLauncher.launch(arrayOf(Manifest.permission.READ_CALL_LOG))
-                                    } else {
-                                        openSystemAppSettings()
-                                    }
-                                },
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                        ) {
-                            ListItem(
-                                headlineContent = { Text("Call Log Auto-Tracking", fontWeight = FontWeight.SemiBold) },
-                                supportingContent = { Text("READ_CALL_LOG — Detects calls & updates countdowns automatically.") },
-                                trailingContent = {
-                                    if (callLogPermissionGranted) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.CheckCircle, contentDescription = "Granted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Granted", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    } else {
-                                        Button(
-                                            onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.READ_CALL_LOG)) },
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                        ) {
-                                            Text("Grant", fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Contacts Permission
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    if (!contactsPermissionGranted) {
-                                        permissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS))
-                                    } else {
-                                        openSystemAppSettings()
-                                    }
-                                },
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                        ) {
-                            ListItem(
-                                headlineContent = { Text("Contacts Integration", fontWeight = FontWeight.SemiBold) },
-                                supportingContent = { Text("READ_CONTACTS — Syncs names and numbers from phonebook.") },
-                                trailingContent = {
-                                    if (contactsPermissionGranted) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.CheckCircle, contentDescription = "Granted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Granted", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    } else {
-                                        Button(
-                                            onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS)) },
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                        ) {
-                                            Text("Grant", fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            )
-                        }
-
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        if (!notificationsPermissionGranted) {
-                                            permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
-                                        } else {
-                                            openSystemAppSettings()
-                                        }
-                                    },
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                            ) {
-                                ListItem(
-                                    headlineContent = { Text("Push Notifications", fontWeight = FontWeight.SemiBold) },
-                                    supportingContent = { Text("POST_NOTIFICATIONS — Displays daily call agenda reminders.") },
-                                    trailingContent = {
-                                        if (notificationsPermissionGranted) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Default.CheckCircle, contentDescription = "Granted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Granted", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                        } else {
-                                            Button(
-                                                onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) },
-                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                            ) {
-                                                Text("Grant", fontSize = 12.sp)
-                                            }
-                                        }
-                                    }
+                                Text(
+                                    text = "System Permissions",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    color = if (allPermissionsGranted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = if (allPermissionsGranted) "All Granted" else "Needs Action",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (allPermissionsGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = { openSystemAppSettings() },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Settings,
+                                        contentDescription = "Open System App Settings",
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { isPermissionsExpanded = !isPermissionsExpanded },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPermissionsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = "Toggle permissions details",
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        AnimatedVisibility(visible = isPermissionsExpanded) {
+                            Column(modifier = Modifier.padding(top = 12.dp)) {
+                                Text(
+                                    text = "Tap a permission to grant it or open system app settings page directly.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+
+                                // Call Log Permission
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            if (!callLogPermissionGranted) {
+                                                permissionLauncher.launch(arrayOf(Manifest.permission.READ_CALL_LOG))
+                                            } else {
+                                                openSystemAppSettings()
+                                            }
+                                        },
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                ) {
+                                    ListItem(
+                                        headlineContent = { Text("Call Log Auto-Tracking", fontWeight = FontWeight.SemiBold) },
+                                        supportingContent = { Text("READ_CALL_LOG — Detects calls & updates countdowns automatically.") },
+                                        trailingContent = {
+                                            if (callLogPermissionGranted) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Default.CheckCircle, contentDescription = "Granted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Granted", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.READ_CALL_LOG)) },
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text("Grant", fontSize = 12.sp)
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Contacts Permission
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            if (!contactsPermissionGranted) {
+                                                permissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS))
+                                            } else {
+                                                openSystemAppSettings()
+                                            }
+                                        },
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                ) {
+                                    ListItem(
+                                        headlineContent = { Text("Contacts Integration", fontWeight = FontWeight.SemiBold) },
+                                        supportingContent = { Text("READ_CONTACTS — Syncs names and numbers from phonebook.") },
+                                        trailingContent = {
+                                            if (contactsPermissionGranted) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Default.CheckCircle, contentDescription = "Granted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Granted", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS)) },
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text("Grant", fontSize = 12.sp)
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable {
+                                                if (!notificationsPermissionGranted) {
+                                                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                                                } else {
+                                                    openSystemAppSettings()
+                                                }
+                                            },
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                    ) {
+                                        ListItem(
+                                            headlineContent = { Text("Push Notifications", fontWeight = FontWeight.SemiBold) },
+                                            supportingContent = { Text("POST_NOTIFICATIONS — Displays daily call agenda reminders.") },
+                                            trailingContent = {
+                                                if (notificationsPermissionGranted) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(Icons.Default.CheckCircle, contentDescription = "Granted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Text("Granted", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                } else {
+                                                    Button(
+                                                        onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) },
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Text("Grant", fontSize = 12.sp)
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -476,32 +527,51 @@ fun SettingsScreen(
 
                         Button(
                             onClick = { viewModel.syncCallLogs() },
+                            enabled = !isSyncing,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.PhoneInTalk, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Sync System Contacts & Call Logs Now")
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedButton(
-                            onClick = { viewModel.removeSampleContacts() },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Clear Sample / Dummy Contacts", color = MaterialTheme.colorScheme.error)
+                            if (isSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Syncing System Contacts & Call Logs...")
+                            } else {
+                                Icon(Icons.Default.PhoneInTalk, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Sync System Contacts & Call Logs Now")
+                            }
                         }
                     }
                 }
             }
 
-            // Data Backup & Restore (Google Cloud + JSON Export/Import)
+            // Data Backup & Restore (Storage Access Framework Export/Import)
             item {
                 val coroutineScope = rememberCoroutineScope()
+
+                val exportLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.CreateDocument("application/json")
+                ) { uri: Uri? ->
+                    uri?.let { saveUri ->
+                        coroutineScope.launch {
+                            try {
+                                val json = viewModel.getExportJsonString()
+                                context.contentResolver.openOutputStream(saveUri)?.use { outputStream ->
+                                    outputStream.write(json.toByteArray(Charsets.UTF_8))
+                                }
+                                Toast.makeText(context, "Backup successfully exported and saved!", Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Export failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
+
                 val importLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.GetContent()
+                    contract = ActivityResultContracts.OpenDocument()
                 ) { uri: Uri? ->
                     uri?.let { fileUri ->
                         try {
@@ -541,9 +611,9 @@ fun SettingsScreen(
                                 Icon(Icons.Default.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
-                                    Text("Google Drive System Auto-Backup", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("Local & Cloud Backup (Storage Access Framework)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                     Text(
-                                        "Active — Your app database, tags, notes & call history are automatically backed up to your Google account cloud backup.",
+                                        "Export or restore standalone backup files using Android's native file picker. Save directly to your internal storage, SD card, or Google Drive folder.",
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -556,7 +626,7 @@ fun SettingsScreen(
                         Text("Manual JSON Backup & Restore:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Export a standalone .json backup file to save anywhere or import a saved backup file to restore tags & history.",
+                            "Export a standalone .json backup file or restore contacts tags & history from a file.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -569,19 +639,7 @@ fun SettingsScreen(
                         ) {
                             Button(
                                 onClick = {
-                                    coroutineScope.launch {
-                                        try {
-                                            val json = viewModel.getExportJsonString()
-                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                                type = "application/json"
-                                                putExtra(Intent.EXTRA_SUBJECT, "KeepInTouch_Backup.json")
-                                                putExtra(Intent.EXTRA_TEXT, json)
-                                            }
-                                            context.startActivity(Intent.createChooser(shareIntent, "Save or Export Backup JSON"))
-                                        } catch (e: Exception) {
-                                            Toast.makeText(context, "Export failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
+                                    exportLauncher.launch("KeepInTouch_Backup.json")
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -592,7 +650,7 @@ fun SettingsScreen(
 
                             OutlinedButton(
                                 onClick = {
-                                    importLauncher.launch("*/*")
+                                    importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {

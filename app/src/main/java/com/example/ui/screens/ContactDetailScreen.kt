@@ -22,10 +22,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import com.example.data.dto.ContactWithDetails
 import com.example.data.model.InteractionLogEntity
 import com.example.data.model.InteractionType
 import com.example.data.model.TagCategory
+import com.example.data.sync.SystemContactHelper
 import com.example.data.ui.viewmodel.MainViewModel
 import com.example.ui.components.TagChip
 import com.example.ui.theme.OverdueRed
@@ -87,6 +90,18 @@ fun ContactDetailScreen(
             ) {
                 // Header Card
                 item {
+                    val (phoneDetails, fetchedPhotoUri) = remember(item) {
+                        SystemContactHelper.fetchPhoneDetailsAndPhoto(
+                            context = context,
+                            systemContactId = item.contact.systemContactId,
+                            lookupKey = item.contact.lookupKey,
+                            fallbackPhoneNumber = item.contact.phoneNumber,
+                            fallbackSecondaryNumbers = item.contact.secondaryNumbers
+                        )
+                    }
+
+                    val displayPhotoUri = item.contact.avatarUri ?: fetchedPhotoUri
+
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -98,19 +113,30 @@ fun ContactDetailScreen(
                             modifier = Modifier.padding(20.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = item.contact.name.take(1).uppercase(),
-                                    fontSize = 32.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                            if (!displayPhotoUri.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = displayPhotoUri,
+                                    contentDescription = "${item.contact.name} photo",
+                                    modifier = Modifier
+                                        .size(80.dp)
+                                        .clip(CircleShape),
+                                    contentScale = ContentScale.Crop
                                 )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(72.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = item.contact.name.take(1).uppercase(),
+                                        fontSize = 32.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(12.dp))
@@ -119,11 +145,40 @@ fun ContactDetailScreen(
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text(
-                                text = item.contact.phoneNumber,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            ) {
+                                phoneDetails.forEach { detail ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                val intent = Intent(Intent.ACTION_DIAL).apply {
+                                                    data = Uri.parse("tel:${detail.number}")
+                                                }
+                                                context.startActivity(intent)
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = "${detail.label}: ${detail.number}",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Icon(
+                                            Icons.Default.Call,
+                                            contentDescription = "Call ${detail.label} ${detail.number}",
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
 
                             if (!item.contact.notes.isNullOrBlank()) {
                                 Spacer(modifier = Modifier.height(6.dp))
@@ -137,23 +192,39 @@ fun ContactDetailScreen(
                             Spacer(modifier = Modifier.height(16.dp))
 
                             // Cadence Info Row
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Recurrence Frequency", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("${item.resolvedFrequencyDays()} Days", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                }
+                            if (item.hasFrequencyTracked()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Recurrence Frequency", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${item.resolvedFrequencyDays() ?: 0} Days", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    }
 
-                                val days = item.daysUntilDue()
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Status", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val days = item.daysUntilDue()
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Status", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            text = if (days < 0) "${-days}d Overdue" else "Due in ${days}d",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = if (days < 0) OverdueRed else SuccessGreen
+                                        )
+                                    }
+                                }
+                            } else {
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
                                     Text(
-                                        text = if (days < 0) "${-days}d Overdue" else "Due in ${days}d",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = if (days < 0) OverdueRed else SuccessGreen
+                                        text = "No frequency tag assigned (Not scheduled in call agenda)",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(8.dp),
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
                                 }
                             }
