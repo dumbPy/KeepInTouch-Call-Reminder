@@ -7,6 +7,9 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Android APK (Native - Recommended for speed)
@@ -53,7 +56,7 @@ jobs:
   github-release:
     name: Publish GitHub Release (Auto-synced by Uptodown)
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref_name == 'main' || github.ref_name == 'master')
     runs-on: ubuntu-latest
 
     steps:
@@ -70,8 +73,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release-apk/*.apk
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'Latest Release' }}
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
