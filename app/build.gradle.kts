@@ -26,26 +26,13 @@ android {
   signingConfigs {
     val customKeystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
     val customKeystore = file(customKeystorePath)
-    val debugKeystore = file("${rootDir}/debug.keystore")
-
-    create("release") {
-      if (customKeystore.exists()) {
+    if (customKeystore.exists()) {
+      create("release") {
         storeFile = customKeystore
         storePassword = System.getenv("STORE_PASSWORD")
         keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
         keyPassword = System.getenv("KEY_PASSWORD")
-      } else {
-        storeFile = debugKeystore
-        storePassword = "android"
-        keyAlias = "androiddebugkey"
-        keyPassword = "android"
       }
-    }
-    create("debugConfig") {
-      storeFile = debugKeystore
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
     }
   }
 
@@ -54,9 +41,35 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+
+      val customKeystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+      val debugKeystore = file("${rootDir}/debug.keystore")
+      if (file(customKeystorePath).exists()) {
+        signingConfig = signingConfigs.getByName("release")
+      } else if (debugKeystore.exists()) {
+        signingConfig = signingConfigs.create("localDebugSigning") {
+          storeFile = debugKeystore
+          storePassword = "android"
+          keyAlias = "androiddebugkey"
+          keyPassword = "android"
+        }
+      } else {
+        signingConfig = signingConfigs.getByName("debug")
+      }
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+    debug {
+      val debugKeystore = file("${rootDir}/debug.keystore")
+      if (debugKeystore.exists()) {
+        signingConfig = signingConfigs.create("debugConfig") {
+          storeFile = debugKeystore
+          storePassword = "android"
+          keyAlias = "androiddebugkey"
+          keyPassword = "android"
+        }
+      } else {
+        signingConfig = signingConfigs.getByName("debug")
+      }
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
