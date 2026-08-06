@@ -1,0 +1,23 @@
+# Optimized Dockerfile using pre-configured Android SDK 34 & JDK 17 base image
+# Uses pre-built mobiledevops/android-sdk-image so command line tools, SDK 34, and Java 17 are pre-installed
+FROM mobiledevops/android-sdk-image:34.0.0 AS builder
+
+WORKDIR /workspace
+
+# Copy Gradle files and project sources
+COPY gradle /workspace/gradle
+COPY gradlew /workspace/gradlew
+COPY settings.gradle.kts /workspace/settings.gradle.kts
+COPY build.gradle.kts /workspace/build.gradle.kts
+COPY gradle.properties /workspace/gradle.properties
+COPY app /workspace/app
+
+# Make Gradle wrapper executable & compile Release APK
+RUN chmod +x ./gradlew && ./gradlew assembleRelease --no-daemon
+
+# Lightweight export stage for compiled APK artifacts
+FROM alpine:3.18
+WORKDIR /output
+COPY --from=builder /workspace/app/build/outputs/apk/release/*.apk /output/
+CMD ["ls", "-la", "/output"]
+
