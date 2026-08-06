@@ -35,16 +35,6 @@ jobs:
           name: KeepInTouch-Release-APK
           path: app/build/outputs/apk/release/*.apk
 
-  docker-build:
-    name: Build via Dockerfile.txt
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Build Docker Image using Dockerfile.txt
-        run: docker build -f Dockerfile.txt -t keepintouch:latest .
-
   github-release:
     name: Publish GitHub Release (Auto-synced by Uptodown)
     needs: build
