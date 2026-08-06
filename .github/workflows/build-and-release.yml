@@ -1,20 +1,24 @@
 name: Build and Release Android APK
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic Version for the release (e.g. 1.0.0 or v1.0.0)'
+        required: true
+        default: '1.0.0'
+        type: string
   push:
-    branches: [ "main", "master" ]
-    tags: [ "v*" ]
-  pull_request:
-    branches: [ "main", "master" ]
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build Android APK (Native - Recommended for speed)
+    name: Build Android APK
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -43,22 +47,10 @@ jobs:
           name: KeepInTouch-Release-APK
           path: app/build/outputs/apk/release/*.apk
 
-  # Alternative Docker Build (Commented out because Docker pulls add 2+ minutes to GitHub Actions free runner builds):
-  # docker-build:
-  #   name: Build via Docker Container
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout Code
-  #       uses: actions/checkout@v4
-  #     - name: Build Docker Image using Dockerfile.txt
-  #       run: docker build -f Dockerfile.txt -t keepintouch:latest .
-
   github-release:
-    name: Publish GitHub Release (Auto-synced by Uptodown)
+    name: Publish GitHub Release
     needs: build
-    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref_name == 'main' || github.ref_name == 'master')
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -69,15 +61,45 @@ jobs:
           name: KeepInTouch-Release-APK
           path: release-apk/
 
-      - name: Create GitHub Release
+      - name: Determine Version Tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ inputs.version }}"
+          else
+            RAW_VERSION="${{ github.ref_name }}"
+          fi
+          RAW_VERSION=$(echo "$RAW_VERSION" | xargs)
+          if [[ "$RAW_VERSION" =~ ^v[0-9] ]]; then
+            TAG_NAME="$RAW_VERSION"
+          else
+            TAG_NAME="v$RAW_VERSION"
+          fi
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_name=Release $TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create Semantic Version Release
         uses: softprops/action-gh-release@v2
         with:
           files: release-apk/*.apk
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'Latest Release' }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: ${{ steps.version.outputs.release_name }}
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Update Latest Release Tag
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-apk/*.apk
+          tag_name: latest
+          name: Latest Release (${{ steps.version.outputs.tag_name }})
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          body: |
+            Latest release updated to version ${{ steps.version.outputs.tag_name }}.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
