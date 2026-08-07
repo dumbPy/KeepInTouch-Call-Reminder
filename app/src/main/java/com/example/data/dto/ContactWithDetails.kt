@@ -4,10 +4,9 @@ import androidx.room.Embedded
 import androidx.room.Junction
 import androidx.room.Relation
 import com.example.data.model.ContactEntity
-import com.example.data.model.ContactTagCrossRef
 import com.example.data.model.InteractionLogEntity
-import com.example.data.model.TagEntity
-import com.example.data.model.TagCategory
+import com.example.data.model.InteractionType
+import com.example.data.model.GroupEntity
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -17,15 +16,10 @@ data class ContactWithDetails(
     @Embedded val contact: ContactEntity,
     
     @Relation(
-        parentColumn = "id",
-        entityColumn = "id",
-        associateBy = Junction(
-            value = ContactTagCrossRef::class,
-            parentColumn = "contactId",
-            entityColumn = "tagId"
-        )
+        parentColumn = "groupId",
+        entityColumn = "id"
     )
-    val tags: List<TagEntity>,
+    val group: GroupEntity?,
 
     @Relation(
         parentColumn = "id",
@@ -35,15 +29,10 @@ data class ContactWithDetails(
 ) {
     /**
      * Resolves effective recurrence frequency in days for this contact.
-     * Returns null if no FREQUENCY tag is assigned and no customFrequencyDays is set.
+     * Returns null if no custom frequency and no group frequency is set.
      */
     fun resolvedFrequencyDays(): Int? {
-        val freqTag = tags.firstOrNull { it.category == TagCategory.FREQUENCY }
-        if (freqTag != null) {
-            val parsed = freqTag.singleValue.toIntOrNull()
-            if (parsed != null && parsed > 0) return parsed
-        }
-        return contact.customFrequencyDays
+        return contact.customFrequencyDays ?: group?.defaultFrequencyDays
     }
 
     fun hasFrequencyTracked(): Boolean {
@@ -51,30 +40,20 @@ data class ContactWithDetails(
     }
 
     /**
-     * Resolves default swipe snooze duration in days.
-     * Looks for SNOOZE_DEFAULT tag; if none, defaults to 1 day.
-     */
-    fun resolvedDefaultSnoozeDays(): Int {
-        val snoozeTag = tags.firstOrNull { it.category == TagCategory.SNOOZE_DEFAULT }
-        if (snoozeTag != null) {
-            val parsed = snoozeTag.singleValue.toIntOrNull()
-            if (parsed != null && parsed > 0) return parsed
-        }
-        return 1
-    }
-
-    /**
      * Gets latest actual touchpoint call timestamp (from logs or contact cached field).
+     * ONLY connected calls (durationSeconds > 0 or manual/WhatsApp touchpoints) count.
      */
     fun latestTouchpointTimestamp(): Long? {
-        val latestLogTime = interactionLogs
-            .filter { it.type.isCallTouchpoint }
+        val callLogs = interactionLogs.filter { it.type.isCallTouchpoint }
+        val connectedLogTime = callLogs
+            .filter { it.durationSeconds > 0 || it.type == InteractionType.MANUAL_LOG || it.type == InteractionType.WHATSAPP_CALL }
             .maxOfOrNull { it.timestamp }
-        return when {
-            latestLogTime != null && contact.lastCalledTimestamp != null -> maxOf(latestLogTime, contact.lastCalledTimestamp)
-            latestLogTime != null -> latestLogTime
-            else -> contact.lastCalledTimestamp
+
+        if (callLogs.isNotEmpty()) {
+            return connectedLogTime
         }
+
+        return connectedLogTime ?: contact.lastCalledTimestamp
     }
 
     /**
@@ -134,13 +113,16 @@ data class ContactWithDetails(
         return contact.snoozedUntilTimestamp != null && contact.snoozedUntilTimestamp > System.currentTimeMillis()
     }
 
+    /**
+     * Resolves effective priority for this contact.
+     * Priority: 1 = Low, 2 = Normal, 3 = High.
+     */
+    fun resolvedPriority(): Int {
+        return contact.customPriority ?: group?.defaultPriority ?: 2
+    }
+
     fun priorityWeight(): Int {
-        val priorityTag = tags.firstOrNull { it.category == TagCategory.PRIORITY }
-        if (priorityTag != null) {
-            val parsed = priorityTag.singleValue.toIntOrNull()
-            if (parsed != null && parsed in 1..10) return parsed
-        }
-        return 0
+        return resolvedPriority()
     }
 
     fun isOverdue(): Boolean {

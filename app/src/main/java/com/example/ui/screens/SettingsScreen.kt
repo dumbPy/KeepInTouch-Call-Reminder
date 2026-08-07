@@ -526,7 +526,7 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Button(
-                            onClick = { viewModel.syncCallLogs() },
+                            onClick = { viewModel.syncFullContactsAndCallLogs() },
                             enabled = !isSyncing,
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -626,7 +626,7 @@ fun SettingsScreen(
                         Text("Manual JSON Backup & Restore:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Export a standalone .json backup file or restore contacts tags & history from a file.",
+                            "Export a standalone .json backup file or restore contacts, groups & history from a file.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

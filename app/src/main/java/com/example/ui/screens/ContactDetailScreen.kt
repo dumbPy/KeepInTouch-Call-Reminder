@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,10 +28,8 @@ import coil.compose.AsyncImage
 import com.example.data.dto.ContactWithDetails
 import com.example.data.model.InteractionLogEntity
 import com.example.data.model.InteractionType
-import com.example.data.model.TagCategory
 import com.example.data.sync.SystemContactHelper
 import com.example.data.ui.viewmodel.MainViewModel
-import com.example.ui.components.TagChip
 import com.example.ui.theme.OverdueRed
 import com.example.ui.theme.SuccessGreen
 import com.example.ui.theme.WarningAmber
@@ -47,10 +46,10 @@ fun ContactDetailScreen(
     val context = LocalContext.current
     val contactDetailState by viewModel.getContactDetailsFlow(contactId).collectAsState(initial = null)
     val logsState by viewModel.getContactLogsFlow(contactId).collectAsState(initial = emptyList())
-    val allTags by viewModel.allTags.collectAsState()
+    val allGroups by viewModel.allGroups.collectAsState()
 
     var showAddLogDialog by remember { mutableStateOf(false) }
-    var showEditTagsDialog by remember { mutableStateOf(false) }
+    var showEditConfigDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -63,7 +62,10 @@ fun ContactDetailScreen(
                 },
                 actions = {
                     contactDetailState?.contact?.let { contact ->
-                        IconButton(onClick = { viewModel.deleteContact(contact); onBackClick() }) {
+                        IconButton(
+                            onClick = { viewModel.deleteContact(contact); onBackClick() },
+                            modifier = Modifier.testTag("delete_contact_button")
+                        ) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete Contact", tint = MaterialTheme.colorScheme.error)
                         }
                     }
@@ -191,14 +193,14 @@ fun ContactDetailScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Cadence Info Row
+                            // Frequency / Agenda Status Info Row
                             if (item.hasFrequencyTracked()) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceEvenly
                                 ) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("Recurrence Frequency", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("Reminder frequency", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Text("${item.resolvedFrequencyDays() ?: 0} Days", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                     }
 
@@ -206,7 +208,7 @@ fun ContactDetailScreen(
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("Status", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Text(
-                                            text = if (days < 0) "${-days}d Overdue" else "Due in ${days}d",
+                                            text = if (days < 0) "${-days}d Overdue" else if (days == 0) "Due Today" else "Due in ${days}d",
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 15.sp,
                                             color = if (days < 0) OverdueRed else SuccessGreen
@@ -220,7 +222,7 @@ fun ContactDetailScreen(
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Text(
-                                        text = "No frequency tag assigned (Not scheduled in call agenda)",
+                                        text = "No frequency assigned (Not scheduled in call agenda)",
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.padding(8.dp),
@@ -263,7 +265,7 @@ fun ContactDetailScreen(
                     }
                 }
 
-                // Tags Section
+                // Group & Overrides Section
                 item {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                         Row(
@@ -271,25 +273,102 @@ fun ContactDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Assigned Tags", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            TextButton(onClick = { showEditTagsDialog = true }) {
-                                Text("Edit Tags")
+                            Text("Group & Config Overrides", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            TextButton(
+                                onClick = { showEditConfigDialog = true },
+                                modifier = Modifier.testTag("edit_config_button")
+                            ) {
+                                Text("Configure")
                             }
                         }
 
-                        if (item.tags.isEmpty()) {
-                            Text(
-                                text = "No tags assigned. Assign a Frequency or Group tag to set custom reminders.",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                item.tags.forEach { tag ->
-                                    TagChip(tag = tag)
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                // Group Information
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Associated Group: ", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                                    if (item.group != null) {
+                                        val groupColor = try {
+                                            Color(android.graphics.Color.parseColor(item.group.colorHex))
+                                        } catch (e: Exception) {
+                                            MaterialTheme.colorScheme.primary
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .background(groupColor.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                        ) {
+                                            Text(item.group.name, color = groupColor, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+                                    } else {
+                                        Text("None (Unassigned)", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                                    }
+                                }
+
+                                // Frequency details (with override status)
+                                Column {
+                                    Text("Reminder frequency", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        if (item.contact.customFrequencyDays != null) {
+                                            Text("Custom Override: every ${item.contact.customFrequencyDays} days", color = MaterialTheme.colorScheme.secondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            item.group?.let { g ->
+                                                Text("(Group default is ${g.defaultFrequencyDays}d)", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 12.sp)
+                                            }
+                                        } else {
+                                            val freqVal = item.group?.defaultFrequencyDays
+                                            if (freqVal != null) {
+                                                Text("Group Default: every $freqVal days", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                            } else {
+                                                Text("Not Tracked (No group default or custom override)", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), fontSize = 13.sp)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Priority Level details (with override status)
+                                Column {
+                                    Text("Priority Level", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val resolvedVal = item.resolvedPriority()
+                                        val priorityText = when (resolvedVal) {
+                                            1 -> "Low"
+                                            3 -> "High"
+                                            else -> "Normal"
+                                        }
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(priorityText, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                            if (resolvedVal == 3) {
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Icon(Icons.Default.Star, contentDescription = "High Priority", tint = Color(0xFFFFC107), modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+
+                                        if (item.contact.customPriority != null) {
+                                            val gPriorityText = when (item.group?.defaultPriority) {
+                                                1 -> "Low"
+                                                3 -> "High"
+                                                else -> "Normal"
+                                            }
+                                            Text("Custom Override (Group was $gPriorityText)", color = MaterialTheme.colorScheme.secondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        } else {
+                                            Text("Group Default", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 12.sp)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -329,7 +408,7 @@ fun ContactDetailScreen(
                         }
                     }
                 } else {
-                    items(logsState) { log ->
+                    items(logsState, key = { it.id }) { log ->
                         TimelineLogItem(log = log)
                     }
                 }
@@ -395,88 +474,223 @@ fun ContactDetailScreen(
         )
     }
 
-    // Edit Tags Dialog
-    if (showEditTagsDialog && contactDetailState != null) {
-        val currentTagIds = remember {
-            mutableStateListOf<Long>().apply {
-                addAll(contactDetailState!!.tags.map { it.id })
-            }
-        }
-
-        // Distinct tags
-        val distinctTags = remember(allTags) {
-            allTags.distinctBy { "${it.category.name}_${it.name.trim().lowercase()}" }
-        }
+    // Edit Group & Override Configuration Dialog
+    if (showEditConfigDialog && contactDetailState != null) {
+        val currentContact = contactDetailState!!.contact
+        var selectedGroupId by remember { mutableStateOf(currentContact.groupId) }
+        var customFreqDays by remember { mutableStateOf<Int?>(currentContact.customFrequencyDays) }
+        var customPriority by remember { mutableStateOf(currentContact.customPriority) } // null means group default
 
         AlertDialog(
-            onDismissRequest = { showEditTagsDialog = false },
-            title = { Text("Assign Tags") },
+            onDismissRequest = { showEditConfigDialog = false },
+            title = { Text("Configure Reminders") },
             text = {
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
+                    // Group selector
                     item {
-                        Text(
-                            text = "Group tags allow multiple selections. Frequency, Snooze, and Priority allow max 1 active tag per category:",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text("Associated Group", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        // No Group Option
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedGroupId = null }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            RadioButton(
+                                selected = selectedGroupId == null,
+                                onClick = { selectedGroupId = null }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("No Group (Not Scheduled)", fontSize = 14.sp)
+                        }
+
+                        // Listed Groups
+                        allGroups.forEach { group ->
+                            val gColor = try {
+                                Color(android.graphics.Color.parseColor(group.colorHex))
+                            } catch (e: Exception) {
+                                MaterialTheme.colorScheme.primary
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedGroupId = group.id }
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                RadioButton(
+                                    selected = selectedGroupId == group.id,
+                                    onClick = { selectedGroupId = group.id }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(gColor)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(group.name, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("(${group.defaultFrequencyDays}d, Priority: " + when(group.defaultPriority) {
+                                    1 -> "Low"
+                                    3 -> "High"
+                                    else -> "Normal"
+                                } + ")", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
 
-                    TagCategory.values().forEach { category ->
-                        val catTags = distinctTags.filter { it.category == category }
-                        if (catTags.isNotEmpty()) {
-                            item {
-                                Column(modifier = Modifier.padding(top = 8.dp)) {
-                                    Text(
-                                        text = category.displayName + if (category != TagCategory.GROUPING) " (Max 1)" else " (Multiple)",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.primary
+                    // Frequency override input
+                    item {
+                        Text("Custom Frequency Override", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val selectedGroup = allGroups.find { it.id == selectedGroupId }
+                            val groupFreq = selectedGroup?.defaultFrequencyDays ?: 14
+                            
+                            IconButton(
+                                onClick = {
+                                    val current = customFreqDays
+                                    if (current != null) {
+                                        if (current <= 1) {
+                                            customFreqDays = null
+                                        } else {
+                                            customFreqDays = current - 1
+                                        }
+                                    }
+                                },
+                                enabled = customFreqDays != null,
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(
+                                        color = if (customFreqDays != null) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                                        shape = RoundedCornerShape(12.dp)
                                     )
-                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Remove,
+                                    contentDescription = "Decrease Frequency",
+                                    tint = if (customFreqDays != null) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                )
+                            }
+                            
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (customFreqDays != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = 1.dp,
+                                    color = if (customFreqDays != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp)
+                                ) {
+                                    Text(
+                                        text = if (customFreqDays != null) "$customFreqDays Days" else "Use Group Default",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (customFreqDays != null) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = if (customFreqDays != null) "Custom override active" else "Currently: $groupFreq days",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (customFreqDays != null) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    )
                                 }
                             }
-
-                            items(catTags, key = { it.id }) { tag ->
-                                val isSelected = currentTagIds.contains(tag.id)
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            if (!isSelected) {
-                                                if (tag.category != TagCategory.GROUPING) {
-                                                    val sameCatIds = distinctTags.filter { it.category == tag.category }.map { it.id }
-                                                    currentTagIds.removeAll(sameCatIds)
-                                                }
-                                                currentTagIds.add(tag.id)
-                                            } else {
-                                                currentTagIds.remove(tag.id)
-                                            }
-                                        }
-                                        .padding(vertical = 4.dp, horizontal = 4.dp)
-                                ) {
-                                    Checkbox(
-                                        checked = isSelected,
-                                        onCheckedChange = { checked ->
-                                            if (checked) {
-                                                if (tag.category != TagCategory.GROUPING) {
-                                                    val sameCatIds = distinctTags.filter { it.category == tag.category }.map { it.id }
-                                                    currentTagIds.removeAll(sameCatIds)
-                                                }
-                                                if (!currentTagIds.contains(tag.id)) {
-                                                    currentTagIds.add(tag.id)
-                                                }
-                                            } else {
-                                                currentTagIds.remove(tag.id)
-                                            }
-                                        }
+                            
+                            IconButton(
+                                onClick = {
+                                    val current = customFreqDays
+                                    if (current == null) {
+                                        customFreqDays = groupFreq
+                                    } else {
+                                        customFreqDays = current + 1
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        shape = RoundedCornerShape(12.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    TagChip(tag = tag)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Increase Frequency",
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                    }
+
+                    // Priority override input
+                    item {
+                        Text("Custom Priority Override", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            listOf(
+                                null to "Default",
+                                1 to "Low",
+                                2 to "Normal",
+                                3 to "High"
+                            ).forEach { (valLevel, valLabel) ->
+                                val selected = customPriority == valLevel
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .clickable { customPriority = valLevel },
+                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = 1.dp,
+                                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                    )
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier.padding(vertical = 10.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Text(
+                                                text = valLabel,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (valLevel == 3) {
+                                                Spacer(modifier = Modifier.width(2.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.Star,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFFFC107),
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -484,15 +698,23 @@ fun ContactDetailScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    viewModel.updateContact(contactDetailState!!.contact, currentTagIds.toList())
-                    showEditTagsDialog = false
-                }) {
-                    Text("Apply Tags")
+                Button(
+                    onClick = {
+                        val updated = currentContact.copy(
+                            groupId = selectedGroupId,
+                            customFrequencyDays = customFreqDays,
+                            customPriority = customPriority
+                        )
+                        viewModel.updateContact(updated)
+                        showEditConfigDialog = false
+                    },
+                    modifier = Modifier.testTag("save_config_button")
+                ) {
+                    Text("Apply")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showEditTagsDialog = false }) {
+                TextButton(onClick = { showEditConfigDialog = false }) {
                     Text("Cancel")
                 }
             }
@@ -509,58 +731,70 @@ fun TimelineLogItem(log: InteractionLogEntity) {
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(12.dp)
         ) {
-            val icon = when (log.type) {
-                InteractionType.INCOMING_CALL -> Icons.Default.CallReceived
-                InteractionType.OUTGOING_CALL -> Icons.Default.CallMade
-                InteractionType.MANUAL_LOG -> Icons.Default.Phone
-                InteractionType.WHATSAPP_CALL -> Icons.Default.PhoneCallback
-                InteractionType.WHATSAPP_CHAT -> Icons.Default.Chat
-                InteractionType.SNOOZE -> Icons.Default.Snooze
-                InteractionType.NOTE -> Icons.Default.Note
-            }
-
-            val iconColor = when (log.type) {
-                InteractionType.INCOMING_CALL, InteractionType.OUTGOING_CALL, InteractionType.MANUAL_LOG -> SuccessGreen
-                InteractionType.WHATSAPP_CALL, InteractionType.WHATSAPP_CHAT -> Color(0xFF25D366)
-                InteractionType.SNOOZE -> WarningAmber
-                else -> MaterialTheme.colorScheme.primary
-            }
-
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(iconColor.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(20.dp))
-            }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val icon = when (log.type) {
+                        InteractionType.INCOMING_CALL -> Icons.Default.CallReceived
+                        InteractionType.OUTGOING_CALL -> Icons.Default.CallMade
+                        InteractionType.WHATSAPP_CALL -> Icons.Default.Call
+                        InteractionType.SNOOZE -> Icons.Default.Snooze
+                        else -> Icons.Default.History
+                    }
+                    val iconColor = when (log.type) {
+                        InteractionType.SNOOZE -> WarningAmber
+                        else -> MaterialTheme.colorScheme.primary
+                    }
 
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = log.type.label,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-                if (!log.note.isNullOrBlank()) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = log.type.label,
+                        tint = iconColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = log.note,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                        text = log.type.label,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
                     )
                 }
+
                 Text(
-                    text = SimpleDateFormat("MMM d, yyyy - h:mm a", Locale.getDefault()).format(Date(log.timestamp)),
+                    text = SimpleDateFormat("MMM d, yyyy h:mm a", Locale.getDefault()).format(Date(log.timestamp)),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (log.durationSeconds > 0) {
+                Spacer(modifier = Modifier.height(4.dp))
+                val minutes = log.durationSeconds / 60
+                val seconds = log.durationSeconds % 60
+                val durationText = if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
+                Text(
+                    text = "Duration: $durationText",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 26.dp)
+                )
+            }
+
+            if (!log.note.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = log.note,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(start = 26.dp)
                 )
             }
         }

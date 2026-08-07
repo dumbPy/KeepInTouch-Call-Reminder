@@ -12,11 +12,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.FormatListBulleted
-import androidx.compose.material.icons.outlined.Label
+import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -45,17 +45,17 @@ class MainActivity : ComponentActivity() {
         val callLogTracker = CallLogTracker(
             context = applicationContext,
             contactDao = database.contactDao(),
-            tagDao = database.tagDao(),
+            groupDao = database.groupDao(),
             interactionLogDao = database.interactionLogDao()
         )
         val backupManager = com.example.data.sync.BackupManager(
             contactDao = database.contactDao(),
-            tagDao = database.tagDao(),
+            groupDao = database.groupDao(),
             interactionLogDao = database.interactionLogDao()
         )
         val repository = ContactRepository(
             contactDao = database.contactDao(),
-            tagDao = database.tagDao(),
+            groupDao = database.groupDao(),
             interactionLogDao = database.interactionLogDao(),
             callLogTracker = callLogTracker,
             backupManager = backupManager
@@ -70,6 +70,21 @@ class MainActivity : ComponentActivity() {
                 val initialDestination = if (hasCallLogPermission && hasContactsPermission) Screen.Agenda.route else Screen.Settings.route
 
                 val viewModel: MainViewModel = viewModel(factory = factory)
+
+                // Auto-sync call logs silently in background whenever app returns to foreground / ON_RESUME
+                val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner) {
+                    val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                        if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                            viewModel.syncCallLogsIncremental(silent = true)
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose {
+                        lifecycleOwner.lifecycle.removeObserver(observer)
+                    }
+                }
+
                 val navController = rememberNavController()
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
@@ -87,7 +102,7 @@ class MainActivity : ComponentActivity() {
                 val showBottomBar = currentRoute in listOf(
                     Screen.Agenda.route,
                     Screen.Contacts.route,
-                    Screen.Tags.route,
+                    Screen.Groups.route,
                     Screen.Settings.route
                 )
 
@@ -135,9 +150,9 @@ class MainActivity : ComponentActivity() {
                                 )
 
                                 NavigationBarItem(
-                                    selected = currentRoute == Screen.Tags.route,
+                                    selected = currentRoute == Screen.Groups.route,
                                     onClick = {
-                                        navController.navigate(Screen.Tags.route) {
+                                        navController.navigate(Screen.Groups.route) {
                                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                             launchSingleTop = true
                                             restoreState = true
@@ -145,11 +160,11 @@ class MainActivity : ComponentActivity() {
                                     },
                                     icon = {
                                         Icon(
-                                            if (currentRoute == Screen.Tags.route) Icons.Filled.Label else Icons.Outlined.Label,
-                                            contentDescription = "Tags"
+                                            if (currentRoute == Screen.Groups.route) Icons.Filled.Group else Icons.Outlined.Group,
+                                            contentDescription = "Groups"
                                         )
                                     },
-                                    label = { Text("Tags") }
+                                    label = { Text("Groups") }
                                 )
 
                                 NavigationBarItem(
@@ -196,8 +211,8 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        composable(Screen.Tags.route) {
-                            TagsManagementScreen(
+                        composable(Screen.Groups.route) {
+                            GroupsManagementScreen(
                                 viewModel = viewModel
                             )
                         }

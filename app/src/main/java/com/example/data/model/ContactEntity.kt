@@ -15,7 +15,9 @@ data class ContactEntity(
     val notes: String? = null,
     val lastCalledTimestamp: Long? = null, // Cached latest call timestamp
     val snoozedUntilTimestamp: Long? = null, // If snoozed, timestamp until which it is hidden
-    val customFrequencyDays: Int? = null, // Fallback if no Frequency tag assigned (default e.g. 14 days)
+    val customFrequencyDays: Int? = null, // Override or custom frequency (in days)
+    val customPriority: Int? = null, // Override priority: 1=Low, 2=Normal, 3=High
+    val groupId: Long? = null, // Group association
     val createdAt: Long = System.currentTimeMillis()
 ) {
     /**

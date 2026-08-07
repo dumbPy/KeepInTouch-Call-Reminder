@@ -7,7 +7,8 @@ import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
 import com.example.data.dao.ContactDao
 import com.example.data.dao.InteractionLogDao
-import com.example.data.dao.TagDao
+import com.example.data.dao.GroupDao
+import com.example.data.dto.ContactWithDetails
 import com.example.data.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -20,18 +21,23 @@ data class SyncResult(
 class CallLogTracker(
     private val context: Context,
     private val contactDao: ContactDao,
-    private val tagDao: TagDao,
+    private val groupDao: GroupDao,
     private val interactionLogDao: InteractionLogDao
 ) {
+    private val prefs by lazy {
+        context.getSharedPreferences("call_log_sync_prefs", Context.MODE_PRIVATE)
+    }
+
     /**
      * Performs full synchronization: imports missing system contacts from phonebook
-     * and syncs recent call logs.
+     * and syncs call logs incrementally.
      */
     suspend fun syncContactsAndCallLogs(): SyncResult = withContext(Dispatchers.IO) {
         val imported = importSystemContacts()
-        val newLogs = syncCallLogsWithDatabase()
+        val newLogs = syncCallLogsIncremental(forceFullScan = false)
         SyncResult(importedContactsCount = imported, newCallLogsCount = newLogs)
     }
+
     /**
      * Normalizes phone number strings for matching.
      */
@@ -50,6 +56,36 @@ class CallLogTracker(
         val tail1 = if (norm1.length >= 7) norm1.takeLast(7) else norm1
         val tail2 = if (norm2.length >= 7) norm2.takeLast(7) else norm2
         return tail1 == tail2
+    }
+
+    /**
+     * Builds an in-memory map for fast O(1) phone number to ContactEntity lookup.
+     */
+    private suspend fun buildPhoneLookupMap(): Map<String, ContactEntity> = withContext(Dispatchers.IO) {
+        val allContacts = contactDao.getAllContactsWithDetails()
+        val map = HashMap<String, ContactEntity>()
+        for (c in allContacts) {
+            for (num in c.contact.getAllPhoneNumbers()) {
+                val normalized = normalizePhoneNumber(num)
+                if (normalized.isNotBlank()) {
+                    map[normalized] = c.contact
+                    if (normalized.length >= 7) {
+                        map[normalized.takeLast(7)] = c.contact
+                    }
+                }
+            }
+        }
+        map
+    }
+
+    private fun findContactForNumber(phoneMap: Map<String, ContactEntity>, rawNumber: String): ContactEntity? {
+        val norm = normalizePhoneNumber(rawNumber)
+        if (norm.isBlank()) return null
+        phoneMap[norm]?.let { return it }
+        if (norm.length >= 7) {
+            phoneMap[norm.takeLast(7)]?.let { return it }
+        }
+        return null
     }
 
     /**
@@ -85,7 +121,6 @@ class CallLogTracker(
                 contactDao.updateContact(updatedPrimary)
 
                 for (dup in duplicates) {
-                    contactDao.transferTagCrossRefs(dup.contact.id, primary.contact.id)
                     contactDao.transferInteractionLogs(dup.contact.id, primary.contact.id)
                     contactDao.deleteContactById(dup.contact.id)
                     mergedCount++
@@ -106,7 +141,6 @@ class CallLogTracker(
             return@withContext 0
         }
 
-        // First deduplicate any existing duplicates in Room
         deduplicateContactsInDatabase()
         removeSampleContacts()
 
@@ -170,26 +204,55 @@ class CallLogTracker(
         }
 
         val allExisting = contactDao.getAllContactsWithDetails()
+        val lookupMap = mutableMapOf<String, ContactWithDetails>()
+        val systemIdMap = mutableMapOf<Long, ContactWithDetails>()
+        val nameMap = mutableMapOf<String, ContactWithDetails>()
+        val phoneMap = mutableMapOf<String, ContactWithDetails>()
+
+        for (c in allExisting) {
+            c.contact.lookupKey?.let { lookupMap[it] = c }
+            c.contact.systemContactId?.let { if (it > 0) systemIdMap[it] = c }
+            nameMap[c.contact.name.trim().lowercase()] = c
+            for (num in c.contact.getAllPhoneNumbers()) {
+                val norm = normalizePhoneNumber(num)
+                if (norm.isNotBlank()) {
+                    phoneMap[norm] = c
+                    if (norm.length >= 7) {
+                        phoneMap[norm.takeLast(7)] = c
+                    }
+                }
+            }
+        }
 
         for ((_, group) in systemContactGroups) {
             if (group.numbers.isEmpty()) continue
 
-            // Check if contact already exists by system contact ID, lookup key, name or phone numbers
-            val existingContact = allExisting.firstOrNull { c ->
-                (group.lookupKey != null && c.contact.lookupKey == group.lookupKey) ||
-                        (group.contactId > 0 && c.contact.systemContactId == group.contactId) ||
-                        c.contact.name.equals(group.name, ignoreCase = true) ||
-                        group.numbers.any { num -> c.contact.getAllPhoneNumbers().any { existingNum -> isPhoneMatch(existingNum, num) } }
+            var existingContact: ContactWithDetails? = null
+            if (group.lookupKey != null) {
+                existingContact = lookupMap[group.lookupKey]
+            }
+            if (existingContact == null && group.contactId > 0) {
+                existingContact = systemIdMap[group.contactId]
+            }
+            if (existingContact == null) {
+                existingContact = nameMap[group.name.lowercase()]
+            }
+            if (existingContact == null) {
+                for (num in group.numbers) {
+                    val norm = normalizePhoneNumber(num)
+                    val match = phoneMap[norm] ?: if (norm.length >= 7) phoneMap[norm.takeLast(7)] else null
+                    if (match != null) {
+                        existingContact = match
+                        break
+                    }
+                }
             }
 
             if (existingContact != null) {
-                // Update system identifiers, photo URI and secondary numbers if needed
                 val currentNums = existingContact.contact.getAllPhoneNumbers().toMutableList()
-                var updated = false
                 for (num in group.numbers) {
                     if (!currentNums.any { isPhoneMatch(it, num) }) {
                         currentNums.add(num)
-                        updated = true
                     }
                 }
                 val sec = if (currentNums.size > 1) currentNums.drop(1).joinToString(", ") else null
@@ -203,7 +266,6 @@ class CallLogTracker(
                     contactDao.updateContact(updatedContact)
                 }
             } else {
-                // Create single new contact entry for this system contact
                 val primaryNum = group.numbers.first()
                 val secNums = if (group.numbers.size > 1) group.numbers.drop(1).joinToString(", ") else null
                 contactDao.insertContact(
@@ -240,21 +302,31 @@ class CallLogTracker(
     }
 
     /**
-     * Scans system CallLog for recent calls matching tracked contact phone numbers.
-     * Inserts new interaction logs and updates lastCalledTimestamp.
+     * Incrementally scans system CallLog for new calls matching tracked contact phone numbers.
+     * Fast, lightweight, and safe to call on every app open/resume.
+     * ONLY connected calls (duration > 0) update lastCalledTimestamp and reset due date.
      */
-    suspend fun syncCallLogsWithDatabase(): Int = withContext(Dispatchers.IO) {
-        // First import any missing system contacts if READ_CONTACTS is granted
-        importSystemContacts()
-
+    suspend fun syncCallLogsIncremental(forceFullScan: Boolean = false): Int = withContext(Dispatchers.IO) {
         if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALL_LOG)
             != PackageManager.PERMISSION_GRANTED
         ) {
             return@withContext 0
         }
 
+        val lastSyncTime = if (forceFullScan) 0L else prefs.getLong("last_call_log_sync", 0L)
+        val now = System.currentTimeMillis()
+
+        // If never synced before, fetch call logs from last 30 days to keep initial scan instant
+        val querySinceTime = if (lastSyncTime > 0) lastSyncTime else (now - 30 * 86_400_000L)
+
+        val selection = "${CallLog.Calls.DATE} > ?"
+        val selectionArgs = arrayOf(querySinceTime.toString())
+
+        val phoneMap = buildPhoneLookupMap()
+        if (phoneMap.isEmpty()) return@withContext 0
+
         var newLogsAdded = 0
-        val allContactsWithDetails = contactDao.getAllContactsWithDetails()
+        var maxSeenCallTime = lastSyncTime
 
         val cursor = context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
@@ -264,8 +336,8 @@ class CallLogTracker(
                 CallLog.Calls.DURATION,
                 CallLog.Calls.TYPE
             ),
-            null,
-            null,
+            selection,
+            selectionArgs,
             "${CallLog.Calls.DATE} DESC"
         )
 
@@ -281,94 +353,86 @@ class CallLogTracker(
                 val duration = it.getLong(durationIdx)
                 val callType = it.getInt(typeIdx)
 
-                // Find matching contact in database by checking primary and secondary numbers
-                val contactDetails = allContactsWithDetails.firstOrNull { c ->
-                    c.contact.getAllPhoneNumbers().any { num -> isPhoneMatch(num, rawNumber) }
-                } ?: continue
+                if (callTime > maxSeenCallTime) {
+                    maxSeenCallTime = callTime
+                }
 
-                val contact = contactDetails.contact
+                val contact = findContactForNumber(phoneMap, rawNumber) ?: continue
 
-                // Map Android CallLog type to InteractionType
                 val interactionType = when (callType) {
                     CallLog.Calls.INCOMING_TYPE -> InteractionType.INCOMING_CALL
                     CallLog.Calls.OUTGOING_TYPE -> InteractionType.OUTGOING_CALL
                     else -> null
                 } ?: continue
 
-                // Check if this log entry already exists
                 val existingLogs = interactionLogDao.getLogsForContact(contact.id)
                 val alreadyLogged = existingLogs.any { log ->
                     log.timestamp == callTime && log.type == interactionType
                 }
 
                 if (!alreadyLogged) {
+                    val isConnectedCall = duration > 0
+                    val logNote = if (isConnectedCall) "Auto-synced Call Log (${duration}s)" else "Unanswered Call (${duration}s)"
+
                     interactionLogDao.insertLog(
                         InteractionLogEntity(
                             contactId = contact.id,
                             timestamp = callTime,
                             type = interactionType,
                             durationSeconds = duration,
-                            note = "Auto-synced from Call Log"
+                            note = logNote
                         )
                     )
                     newLogsAdded++
 
-                    // Update contact lastCalledTimestamp if newer
-                    if (contact.lastCalledTimestamp == null || callTime > contact.lastCalledTimestamp) {
-                        contactDao.updateContact(
-                            contact.copy(
-                                lastCalledTimestamp = callTime,
-                                snoozedUntilTimestamp = null // Reset snooze when called!
+                    // ONLY connected calls (duration > 0) count as contact touchpoint and reset counter
+                    if (isConnectedCall) {
+                        if (contact.lastCalledTimestamp == null || callTime > contact.lastCalledTimestamp) {
+                            contactDao.updateContact(
+                                contact.copy(
+                                    lastCalledTimestamp = callTime,
+                                    snoozedUntilTimestamp = null // Reset snooze on connected call!
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
         }
+
+        val newSyncPoint = if (maxSeenCallTime > lastSyncTime) maxSeenCallTime else now
+        prefs.edit().putLong("last_call_log_sync", newSyncPoint).apply()
+
         return@withContext newLogsAdded
     }
 
+    suspend fun syncCallLogsWithDatabase(): Int = syncCallLogsIncremental(forceFullScan = false)
+
     /**
-     * Pre-populates default tags and sample contacts if database is empty.
+     * Pre-populates default groups and sample contacts if database is empty.
      */
     suspend fun seedDefaultDataIfEmpty() = withContext(Dispatchers.IO) {
-        // Clean up any duplicate tags in database
-        tagDao.deduplicateTags()
-
-        val existingTags = tagDao.getAllTags()
-        if (existingTags.isNotEmpty()) {
+        val existingGroups = groupDao.getAllGroups()
+        if (existingGroups.isNotEmpty()) {
             return@withContext
         }
 
-        // Seed Tags
-        val defaultTags = listOf(
-            TagEntity(name = "Family", category = TagCategory.GROUPING, singleValue = "Family", colorHex = "#2196F3"),
-            TagEntity(name = "Close Friends", category = TagCategory.GROUPING, singleValue = "Close Friends", colorHex = "#4CAF50"),
-            TagEntity(name = "Work & Network", category = TagCategory.GROUPING, singleValue = "Work", colorHex = "#FF9800"),
-            
-            TagEntity(name = "Weekly", category = TagCategory.FREQUENCY, singleValue = "7", colorHex = "#9C27B0"),
-            TagEntity(name = "Bi-Weekly", category = TagCategory.FREQUENCY, singleValue = "14", colorHex = "#673AB7"),
-            TagEntity(name = "Monthly", category = TagCategory.FREQUENCY, singleValue = "30", colorHex = "#3F51B5"),
-            
-            TagEntity(name = "Snooze 1 Day", category = TagCategory.SNOOZE_DEFAULT, singleValue = "1", colorHex = "#009688"),
-            TagEntity(name = "Snooze 3 Days", category = TagCategory.SNOOZE_DEFAULT, singleValue = "3", colorHex = "#00BCD4"),
-            
-            TagEntity(name = "High Priority", category = TagCategory.PRIORITY, singleValue = "10", colorHex = "#E91E63")
+        // Seed Groups
+        val defaultGroups = listOf(
+            GroupEntity(name = "Family", defaultFrequencyDays = 7, defaultPriority = 3, colorHex = "#2196F3"),
+            GroupEntity(name = "Close Friends", defaultFrequencyDays = 14, defaultPriority = 2, colorHex = "#4CAF50"),
+            GroupEntity(name = "Work", defaultFrequencyDays = 30, defaultPriority = 1, colorHex = "#FF9800")
         )
 
-        val insertedTagIds = mutableListOf<Long>()
-        for (tag in defaultTags) {
-            val id = tagDao.insertTag(tag)
-            insertedTagIds.add(id)
+        val groupIds = mutableListOf<Long>()
+        for (group in defaultGroups) {
+            val id = groupDao.insertGroup(group)
+            groupIds.add(id)
         }
 
         // Seed initial sample contacts if contacts database is empty
-        val familyTagId = insertedTagIds.getOrNull(0) ?: 1L
-        val friendsTagId = insertedTagIds.getOrNull(1) ?: 2L
-        val weeklyTagId = insertedTagIds.getOrNull(3) ?: 4L
-        val biWeeklyTagId = insertedTagIds.getOrNull(4) ?: 5L
-        val monthlyTagId = insertedTagIds.getOrNull(5) ?: 6L
-        val highPriorityTagId = insertedTagIds.getOrNull(8) ?: 9L
+        val familyGroupId = groupIds.getOrNull(0) ?: 1L
+        val friendsGroupId = groupIds.getOrNull(1) ?: 2L
 
         val now = System.currentTimeMillis()
         val dayMs = 86_400_000L
@@ -378,25 +442,29 @@ class CallLogTracker(
                 name = "Mom (Sarah)",
                 phoneNumber = "+1 555-0101",
                 notes = "Always call around 7 PM",
-                lastCalledTimestamp = now - (9 * dayMs) // Overdue (9 days ago, weekly tag)
+                lastCalledTimestamp = now - (9 * dayMs), // Overdue (9 days ago, weekly group)
+                groupId = familyGroupId
             ),
             ContactEntity(
                 name = "Alex Johnson",
                 phoneNumber = "+1 555-0102",
                 notes = "College friend, lives in NYC",
-                lastCalledTimestamp = now - (16 * dayMs) // Overdue (16 days ago, biweekly tag)
+                lastCalledTimestamp = now - (16 * dayMs), // Overdue (16 days ago, close friends group)
+                groupId = friendsGroupId
             ),
             ContactEntity(
                 name = "Uncle Robert",
                 phoneNumber = "+1 555-0103",
                 notes = "Check in about weekend plans",
-                lastCalledTimestamp = now - (2 * dayMs) // Up to date
+                lastCalledTimestamp = now - (2 * dayMs), // Up to date
+                groupId = familyGroupId
             ),
             ContactEntity(
                 name = "Grandma Rose",
                 phoneNumber = "+1 555-0104",
                 notes = "Loves hearing about updates",
-                lastCalledTimestamp = now - (8 * dayMs) // Overdue
+                lastCalledTimestamp = now - (8 * dayMs), // Overdue
+                groupId = familyGroupId
             )
         )
 
@@ -404,9 +472,6 @@ class CallLogTracker(
             val contactId = contactDao.insertContact(contact)
             when (index) {
                 0 -> {
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, familyTagId))
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, weeklyTagId))
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, highPriorityTagId))
                     // Add historical interaction log
                     interactionLogDao.insertLog(
                         InteractionLogEntity(
@@ -419,8 +484,6 @@ class CallLogTracker(
                     )
                 }
                 1 -> {
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, friendsTagId))
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, biWeeklyTagId))
                     interactionLogDao.insertLog(
                         InteractionLogEntity(
                             contactId = contactId,
@@ -432,8 +495,6 @@ class CallLogTracker(
                     )
                 }
                 2 -> {
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, familyTagId))
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, monthlyTagId))
                     interactionLogDao.insertLog(
                         InteractionLogEntity(
                             contactId = contactId,
@@ -443,11 +504,6 @@ class CallLogTracker(
                             note = "Messaged on WhatsApp"
                         )
                     )
-                }
-                3 -> {
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, familyTagId))
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, weeklyTagId))
-                    contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, highPriorityTagId))
                 }
             }
         }

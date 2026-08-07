@@ -1,6 +1,6 @@
 {
   "name": "KeepInTouch: Call Reminder",
-  "description": "Smart contact call reminder with call log tracking, tag categories, and interaction history.",
+  "description": "Smart contact call reminder with call log tracking, groups, and interaction history.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

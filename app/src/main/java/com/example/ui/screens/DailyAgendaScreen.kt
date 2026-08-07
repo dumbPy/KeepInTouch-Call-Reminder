@@ -24,6 +24,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,7 +35,6 @@ import com.example.data.sync.SystemContactHelper
 import com.example.data.ui.viewmodel.AgendaSortOption
 import com.example.data.ui.viewmodel.MainViewModel
 import coil.compose.AsyncImage
-import com.example.ui.components.TagChip
 import com.example.ui.theme.OverdueRed
 import com.example.ui.theme.SuccessGreen
 import com.example.ui.theme.WarningAmber
@@ -59,6 +59,10 @@ fun DailyAgendaScreen(
     var selectedLogContactId by remember { mutableStateOf<Long?>(null) }
     var showSortDialog by remember { mutableStateOf(false) }
     var showLookaheadMenu by remember { mutableStateOf(false) }
+
+    var showCustomSnoozeDialog by remember { mutableStateOf(false) }
+    var customSnoozeMonths by remember { mutableStateOf(0) }
+    var customSnoozeDays by remember { mutableStateOf(1) }
 
     val lookaheadOptions = listOf(1, 3, 7, 14, 30)
 
@@ -385,66 +389,214 @@ fun DailyAgendaScreen(
         )
     }
 
-    // Custom Snooze Options Dialog
+    // Snooze Options Dialog
     selectedSnoozeContactId?.let { contactId ->
         val item = allContactsWithDetails.firstOrNull { it.contact.id == contactId }
-        val defaultSnoozeDays = item?.resolvedDefaultSnoozeDays() ?: 1
 
-        AlertDialog(
-            onDismissRequest = { selectedSnoozeContactId = null },
-            title = { Text("Snooze Reminder for ${item?.contact?.name ?: "Contact"}") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Select snooze duration:")
-                    
-                    ListItem(
-                        headlineContent = { Text("1 Day (Quick Snooze)") },
-                        leadingContent = { Icon(Icons.Default.Snooze, contentDescription = null) },
+        if (showCustomSnoozeDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showCustomSnoozeDialog = false
+                },
+                title = { Text("Custom Snooze Duration") },
+                text = {
+                    Column(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                viewModel.snoozeContact(contactId, 1)
-                                selectedSnoozeContactId = null
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = "Set snooze duration for ${item?.contact?.name ?: "Contact"}:",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // Months Selector
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text("Months", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    IconButton(
+                                        onClick = { if (customSnoozeMonths > 0) customSnoozeMonths-- },
+                                        enabled = customSnoozeMonths > 0
+                                    ) {
+                                        Icon(Icons.Default.Remove, contentDescription = "Decrease months")
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        modifier = Modifier.widthIn(min = 60.dp)
+                                    ) {
+                                        Text(
+                                            text = "$customSnoozeMonths",
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { if (customSnoozeMonths < 12) customSnoozeMonths++ },
+                                        enabled = customSnoozeMonths < 12
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = "Increase months")
+                                    }
+                                }
                             }
-                    )
-                    ListItem(
-                        headlineContent = { Text("3 Days") },
-                        leadingContent = { Icon(Icons.Default.Schedule, contentDescription = null) },
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                viewModel.snoozeContact(contactId, 3)
-                                selectedSnoozeContactId = null
+
+                            // Days Selector
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text("Days", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    IconButton(
+                                        onClick = { if (customSnoozeDays > 0 && (customSnoozeMonths > 0 || customSnoozeDays > 1)) customSnoozeDays-- },
+                                        enabled = customSnoozeDays > 0 && (customSnoozeMonths > 0 || customSnoozeDays > 1)
+                                    ) {
+                                        Icon(Icons.Default.Remove, contentDescription = "Decrease days")
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        modifier = Modifier.widthIn(min = 60.dp)
+                                    ) {
+                                        Text(
+                                            text = "$customSnoozeDays",
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { if (customSnoozeDays < 31) customSnoozeDays++ },
+                                        enabled = customSnoozeDays < 31
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = "Increase days")
+                                    }
+                                }
                             }
-                    )
-                    ListItem(
-                        headlineContent = { Text("1 Week (7 Days)") },
-                        leadingContent = { Icon(Icons.Default.CalendarToday, contentDescription = null) },
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                viewModel.snoozeContact(contactId, 7)
-                                selectedSnoozeContactId = null
+                        }
+
+                        val calculatedTotalDays = (customSnoozeMonths * 30) + customSnoozeDays
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val label = buildString {
+                                append("Snooze for ")
+                                if (customSnoozeMonths > 0) append("$customSnoozeMonths Month${if (customSnoozeMonths > 1) "s" else ""} ")
+                                if (customSnoozeDays > 0 || customSnoozeMonths == 0) append("$customSnoozeDays Day${if (customSnoozeDays != 1) "s" else ""}")
+                                if (customSnoozeMonths > 0 && customSnoozeDays > 0) append(" ($calculatedTotalDays days total)")
                             }
-                    )
-                    ListItem(
-                        headlineContent = { Text("Tag Default Preset (${defaultSnoozeDays}d)") },
-                        leadingContent = { Icon(Icons.Default.Label, contentDescription = null) },
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                viewModel.snoozeContact(contactId, defaultSnoozeDays)
-                                selectedSnoozeContactId = null
+                            Text(
+                                text = label,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val totalDays = (customSnoozeMonths * 30) + customSnoozeDays
+                            if (totalDays > 0) {
+                                viewModel.snoozeContact(contactId, totalDays)
                             }
-                    )
+                            showCustomSnoozeDialog = false
+                            selectedSnoozeContactId = null
+                        }
+                    ) {
+                        Text("Snooze Contact")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCustomSnoozeDialog = false }) {
+                        Text("Back")
+                    }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedSnoozeContactId = null }) {
-                    Text("Cancel")
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { selectedSnoozeContactId = null },
+                title = { Text("Snooze Reminder for ${item?.contact?.name ?: "Contact"}") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Select snooze duration:")
+
+                        ListItem(
+                            headlineContent = { Text("1 Day") },
+                            leadingContent = { Icon(Icons.Default.Snooze, contentDescription = null) },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.snoozeContact(contactId, 1)
+                                    selectedSnoozeContactId = null
+                                }
+                        )
+                        ListItem(
+                            headlineContent = { Text("3 Days") },
+                            leadingContent = { Icon(Icons.Default.Schedule, contentDescription = null) },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.snoozeContact(contactId, 3)
+                                    selectedSnoozeContactId = null
+                                }
+                        )
+                        ListItem(
+                            headlineContent = { Text("1 Week (7 Days)") },
+                            leadingContent = { Icon(Icons.Default.CalendarToday, contentDescription = null) },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.snoozeContact(contactId, 7)
+                                    selectedSnoozeContactId = null
+                                }
+                        )
+                        ListItem(
+                            headlineContent = { Text("Custom Duration...") },
+                            leadingContent = { Icon(Icons.Default.Tune, contentDescription = null) },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    customSnoozeMonths = 0
+                                    customSnoozeDays = 1
+                                    showCustomSnoozeDialog = true
+                                }
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { selectedSnoozeContactId = null }) {
+                        Text("Cancel")
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
     // Quick Manual Log Dialog
@@ -536,7 +688,7 @@ fun AgendaContactSwipeItem(
         confirmValueChange = { dismissValue ->
             when (dismissValue) {
                 SwipeToDismissBoxValue.StartToEnd -> {
-                    onQuickSnooze(item.resolvedDefaultSnoozeDays())
+                    onQuickSnooze(1)
                     false
                 }
                 SwipeToDismissBoxValue.EndToStart -> {
@@ -578,7 +730,7 @@ fun AgendaContactSwipeItem(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Snooze, contentDescription = null, tint = Color.White)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Snooze (${item.resolvedDefaultSnoozeDays()}d)", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Quick Snooze (1d)", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 } else if (dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -640,13 +792,25 @@ fun AgendaContactSwipeItem(
                     Spacer(modifier = Modifier.width(12.dp))
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = item.contact.name,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = item.contact.name,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (item.resolvedPriority() == 3) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = "High Priority",
+                                    tint = Color(0xFFFFC107),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.height(2.dp))
                         val lastTime = item.latestTouchpointTimestamp()
                         Text(
@@ -763,16 +927,24 @@ fun AgendaContactSwipeItem(
                         color = MaterialTheme.colorScheme.onSurface
                     )
 
-                    if (item.tags.isNotEmpty()) {
+                    if (item.group != null) {
+                        val groupColor = try {
+                            Color(android.graphics.Color.parseColor(item.group.colorHex))
+                        } catch (e: Exception) {
+                            MaterialTheme.colorScheme.primary
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
+                        Box(
+                            modifier = Modifier
+                                .background(groupColor.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
                         ) {
-                            item.tags.forEach { tag ->
-                                TagChip(tag = tag)
-                            }
+                            Text(
+                                text = item.group.name,
+                                color = groupColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
 

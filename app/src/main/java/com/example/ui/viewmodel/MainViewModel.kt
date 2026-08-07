@@ -11,8 +11,8 @@ import kotlinx.coroutines.launch
 
 enum class AgendaSortOption(val displayName: String, val description: String) {
     OVERDUE_DAYS("Overdue Days", "Most overdue contacts first"),
-    PRIORITY_WEIGHT("Priority Weight", "Higher weight/priority tags first"),
-    FREQUENCY("Frequency", "Shortest frequency cadence first"),
+    PRIORITY_WEIGHT("Priority Weight", "Higher priority first"),
+    FREQUENCY("Reminder Frequency", "Shortest frequency cadence first"),
     NAME("Name", "Alphabetical A-Z")
 }
 
@@ -26,8 +26,8 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    private val _selectedTagFilter = MutableStateFlow<TagEntity?>(null)
-    val selectedTagFilter: StateFlow<TagEntity?> = _selectedTagFilter.asStateFlow()
+    private val _selectedGroupFilter = MutableStateFlow<GroupEntity?>(null)
+    val selectedGroupFilter: StateFlow<GroupEntity?> = _selectedGroupFilter.asStateFlow()
 
     private val _contactSortOption = MutableStateFlow(ContactSortOption.NAME_ASC)
     val contactSortOption: StateFlow<ContactSortOption> = _contactSortOption.asStateFlow()
@@ -38,20 +38,20 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
 
-    val allTags: StateFlow<List<TagEntity>> = repository.allTags
+    val allGroups: StateFlow<List<GroupEntity>> = repository.allGroups
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allContactsWithDetails: StateFlow<List<ContactWithDetails>> = repository.allContactsWithDetails
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val filteredContactsWithDetails: StateFlow<List<ContactWithDetails>> =
-        combine(repository.allContactsWithDetails, _searchQuery, _selectedTagFilter, _contactSortOption) { list, query, tag, sortOpt ->
+        combine(repository.allContactsWithDetails, _searchQuery, _selectedGroupFilter, _contactSortOption) { list, query, group, sortOpt ->
             val filtered = list.filter { item ->
                 val matchesQuery = query.isBlank() ||
                         item.contact.name.contains(query, ignoreCase = true) ||
                         item.contact.getAllPhoneNumbers().any { it.contains(query) }
-                val matchesTag = tag == null || item.tags.any { it.id == tag.id }
-                matchesQuery && matchesTag
+                val matchesGroup = group == null || item.contact.groupId == group.id
+                matchesQuery && matchesGroup
             }
             when (sortOpt) {
                 ContactSortOption.NAME_ASC -> filtered.sortedBy { it.contact.name.lowercase() }
@@ -109,7 +109,7 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
         for (opt in options) {
             val comp: Comparator<ContactWithDetails> = when (opt) {
                 AgendaSortOption.OVERDUE_DAYS -> compareBy { it.daysUntilDue() }
-                AgendaSortOption.PRIORITY_WEIGHT -> compareByDescending { it.priorityWeight() }
+                AgendaSortOption.PRIORITY_WEIGHT -> compareByDescending { it.resolvedPriority() }
                 AgendaSortOption.FREQUENCY -> compareBy { it.resolvedFrequencyDays() ?: Int.MAX_VALUE }
                 AgendaSortOption.NAME -> compareBy { it.contact.name.lowercase() }
             }
@@ -133,8 +133,8 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
         _searchQuery.value = query
     }
 
-    fun setSelectedTagFilter(tag: TagEntity?) {
-        _selectedTagFilter.value = tag
+    fun setSelectedGroupFilter(group: GroupEntity?) {
+        _selectedGroupFilter.value = group
     }
 
     fun setContactSortOption(option: ContactSortOption) {
@@ -145,7 +145,30 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
         _userMessage.value = null
     }
 
+    fun syncCallLogsIncremental(silent: Boolean = false) {
+        viewModelScope.launch {
+            if (!silent) _isSyncing.value = true
+            try {
+                val newLogs = repository.syncCallLogsIncremental()
+                if (!silent) {
+                    val message = if (newLogs > 0) "Synced $newLogs new call log entry(ies)" else "Call logs are up to date"
+                    _userMessage.value = message
+                }
+            } catch (e: Exception) {
+                if (!silent) {
+                    _userMessage.value = "Sync error: ${e.localizedMessage ?: "Check permissions"}"
+                }
+            } finally {
+                if (!silent) _isSyncing.value = false
+            }
+        }
+    }
+
     fun syncCallLogs() {
+        syncCallLogsIncremental(silent = false)
+    }
+
+    fun syncFullContactsAndCallLogs() {
         viewModelScope.launch {
             _isSyncing.value = true
             try {
@@ -196,22 +219,24 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
         }
     }
 
-    fun addContact(name: String, phone: String, notes: String?, tagIds: List<Long>, customFreq: Int? = null) {
+    fun addContact(name: String, phone: String, notes: String?, groupId: Long?, customFreq: Int?, customPriority: Int?) {
         viewModelScope.launch {
             val contact = ContactEntity(
                 name = name,
                 phoneNumber = phone,
                 notes = notes,
-                customFrequencyDays = customFreq
+                customFrequencyDays = customFreq,
+                customPriority = customPriority,
+                groupId = groupId
             )
-            repository.addContact(contact, tagIds)
+            repository.addContact(contact)
             _userMessage.value = "Contact added"
         }
     }
 
-    fun updateContact(contact: ContactEntity, tagIds: List<Long>) {
+    fun updateContact(contact: ContactEntity) {
         viewModelScope.launch {
-            repository.updateContact(contact, tagIds)
+            repository.updateContact(contact)
             _userMessage.value = "Contact updated"
         }
     }
@@ -223,37 +248,37 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
         }
     }
 
-    fun addTag(name: String, category: TagCategory, singleValue: String, colorHex: String) {
+    fun addGroup(name: String, defaultFrequencyDays: Int, defaultPriority: Int, colorHex: String) {
         viewModelScope.launch {
-            val tag = TagEntity(
+            val group = GroupEntity(
                 name = name,
-                category = category,
-                singleValue = singleValue,
+                defaultFrequencyDays = defaultFrequencyDays,
+                defaultPriority = defaultPriority,
                 colorHex = colorHex
             )
-            repository.addTag(tag)
-            _userMessage.value = "Tag added"
+            repository.addGroup(group)
+            _userMessage.value = "Group added"
         }
     }
 
-    fun updateTag(tag: TagEntity) {
+    fun updateGroup(group: GroupEntity) {
         viewModelScope.launch {
-            repository.updateTag(tag)
-            _userMessage.value = "Tag updated"
+            repository.updateGroup(group)
+            _userMessage.value = "Group updated"
         }
     }
 
-    fun deleteTag(tag: TagEntity) {
+    fun deleteGroup(group: GroupEntity) {
         viewModelScope.launch {
-            repository.deleteTag(tag)
-            _userMessage.value = "Tag deleted"
+            repository.deleteGroup(group)
+            _userMessage.value = "Group deleted"
         }
     }
 
-    fun updateContactsForTag(tagId: Long, selectedContactIds: List<Long>) {
+    fun updateContactsForGroup(groupId: Long, selectedContactIds: List<Long>) {
         viewModelScope.launch {
-            repository.updateContactsForTag(tagId, selectedContactIds)
-            _userMessage.value = "Tag contacts updated"
+            repository.updateContactsForGroup(groupId, selectedContactIds)
+            _userMessage.value = "Group members updated"
         }
     }
 
@@ -264,8 +289,8 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
     fun importBackupJson(jsonString: String) {
         viewModelScope.launch {
             try {
-                val (contacts, tags) = repository.importDataFromJson(jsonString)
-                _userMessage.value = "Backup restored: $contacts contact(s), $tags tag(s) imported"
+                val (contacts, groups) = repository.importDataFromJson(jsonString)
+                _userMessage.value = "Backup restored: $contacts contact(s), $groups group(s) imported"
             } catch (e: Exception) {
                 _userMessage.value = "Import failed: ${e.localizedMessage ?: "Invalid JSON backup file"}"
             }

@@ -36,12 +36,10 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.example.data.dto.ContactWithDetails
-import com.example.data.model.TagCategory
-import com.example.data.model.TagEntity
+import com.example.data.model.GroupEntity
 import com.example.data.sync.SystemContactHelper
 import com.example.data.ui.viewmodel.ContactSortOption
 import com.example.data.ui.viewmodel.MainViewModel
-import com.example.ui.components.TagChip
 import com.example.ui.theme.OverdueRed
 import com.example.ui.theme.SuccessGreen
 import java.text.SimpleDateFormat
@@ -55,10 +53,10 @@ fun ContactsListScreen(
 ) {
     val context = LocalContext.current
     val searchQuery by viewModel.searchQuery.collectAsState()
-    val selectedTagFilter by viewModel.selectedTagFilter.collectAsState()
+    val selectedGroupFilter by viewModel.selectedGroupFilter.collectAsState()
     val currentSortOption by viewModel.contactSortOption.collectAsState()
     val contactsList by viewModel.filteredContactsWithDetails.collectAsState()
-    val allTags by viewModel.allTags.collectAsState()
+    val allGroups by viewModel.allGroups.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
     // Permission launcher for sync
@@ -167,25 +165,25 @@ fun ContactsListScreen(
                         Text("|", color = MaterialTheme.colorScheme.outlineVariant)
                     }
 
-                    // Tag filters
+                    // Group filters
                     item {
                         FilterChip(
-                            selected = selectedTagFilter == null,
-                            onClick = { viewModel.setSelectedTagFilter(null) },
-                            label = { Text("All Tags") }
+                            selected = selectedGroupFilter == null,
+                            onClick = { viewModel.setSelectedGroupFilter(null) },
+                            label = { Text("All Groups") }
                         )
                     }
-                    items(allTags) { tag ->
+                    items(allGroups) { group ->
                         FilterChip(
-                            selected = selectedTagFilter?.id == tag.id,
+                            selected = selectedGroupFilter?.id == group.id,
                             onClick = {
-                                if (selectedTagFilter?.id == tag.id) {
-                                    viewModel.setSelectedTagFilter(null)
+                                if (selectedGroupFilter?.id == group.id) {
+                                    viewModel.setSelectedGroupFilter(null)
                                 } else {
-                                    viewModel.setSelectedTagFilter(tag)
+                                    viewModel.setSelectedGroupFilter(group)
                                 }
                             },
-                            label = { Text(tag.name) }
+                            label = { Text(group.name) }
                         )
                     }
                 }
@@ -339,13 +337,25 @@ fun ContactListItemCard(
             Spacer(modifier = Modifier.width(16.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.contact.name,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = item.contact.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (item.resolvedPriority() == 3) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = "High Priority",
+                            tint = Color(0xFFFFC107),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
                 
                 val primaryDetail = phoneDetails.firstOrNull()
                 val phoneDisplayText = if (phoneDetails.size > 1 && primaryDetail != null) {
@@ -362,16 +372,24 @@ fun ContactListItemCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (item.tags.isNotEmpty()) {
+                if (item.group != null) {
+                    val groupColor = try {
+                        Color(android.graphics.Color.parseColor(item.group.colorHex))
+                    } catch (e: Exception) {
+                        MaterialTheme.colorScheme.primary
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
-                    @OptIn(ExperimentalLayoutApi::class)
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    Box(
+                        modifier = Modifier
+                            .background(groupColor.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
-                        item.tags.forEach { tag ->
-                            TagChip(tag = tag)
-                        }
+                        Text(
+                            text = item.group.name,
+                            color = groupColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 

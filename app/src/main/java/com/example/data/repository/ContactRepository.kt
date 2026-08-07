@@ -2,7 +2,7 @@ package com.example.data.repository
 
 import com.example.data.dao.ContactDao
 import com.example.data.dao.InteractionLogDao
-import com.example.data.dao.TagDao
+import com.example.data.dao.GroupDao
 import com.example.data.dto.ContactWithDetails
 import com.example.data.model.*
 import com.example.data.sync.BackupManager
@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.Flow
 
 class ContactRepository(
     private val contactDao: ContactDao,
-    private val tagDao: TagDao,
+    private val groupDao: GroupDao,
     private val interactionLogDao: InteractionLogDao,
     private val callLogTracker: CallLogTracker,
     private val backupManager: BackupManager
@@ -19,8 +19,8 @@ class ContactRepository(
     val allContactsWithDetails: Flow<List<ContactWithDetails>> =
         contactDao.getAllContactsWithDetailsFlow()
 
-    val allTags: Flow<List<TagEntity>> =
-        tagDao.getAllTagsFlow()
+    val allGroups: Flow<List<GroupEntity>> =
+        groupDao.getAllGroupsFlow()
 
     fun getContactDetailsFlow(id: Long): Flow<ContactWithDetails?> =
         contactDao.getContactWithDetailsFlow(id)
@@ -28,20 +28,12 @@ class ContactRepository(
     fun getContactLogsFlow(contactId: Long): Flow<List<InteractionLogEntity>> =
         interactionLogDao.getLogsForContactFlow(contactId)
 
-    suspend fun addContact(contact: ContactEntity, tagIds: List<Long>): Long {
-        val contactId = contactDao.insertContact(contact)
-        for (tagId in tagIds) {
-            contactDao.insertContactTagCrossRef(ContactTagCrossRef(contactId, tagId))
-        }
-        return contactId
+    suspend fun addContact(contact: ContactEntity): Long {
+        return contactDao.insertContact(contact)
     }
 
-    suspend fun updateContact(contact: ContactEntity, tagIds: List<Long>) {
+    suspend fun updateContact(contact: ContactEntity) {
         contactDao.updateContact(contact)
-        contactDao.removeAllTagsForContact(contact.id)
-        for (tagId in tagIds) {
-            contactDao.insertContactTagCrossRef(ContactTagCrossRef(contact.id, tagId))
-        }
     }
 
     suspend fun deleteContact(contact: ContactEntity) {
@@ -66,7 +58,7 @@ class ContactRepository(
         )
 
         val contact = contactDao.getContactById(contactId) ?: return
-        if (type.isCallTouchpoint) {
+        if (type.isCallTouchpoint && (durationSeconds > 0 || type == InteractionType.MANUAL_LOG || type == InteractionType.WHATSAPP_CALL)) {
             contactDao.updateContact(
                 contact.copy(
                     lastCalledTimestamp = now,
@@ -108,40 +100,36 @@ class ContactRepository(
         )
     }
 
-    suspend fun addTag(tag: TagEntity): Long = tagDao.insertTag(tag)
+    suspend fun addGroup(group: GroupEntity): Long = groupDao.insertGroup(group)
 
-    suspend fun updateTag(tag: TagEntity) = tagDao.updateTag(tag)
+    suspend fun updateGroup(group: GroupEntity) = groupDao.updateGroup(group)
 
-    suspend fun deleteTag(tag: TagEntity) = tagDao.deleteTag(tag)
+    suspend fun deleteGroup(group: GroupEntity) = groupDao.deleteGroup(group)
 
-    suspend fun updateContactsForTag(tagId: Long, selectedContactIds: List<Long>) {
-        val targetTag = tagDao.getTagById(tagId) ?: return
+    suspend fun updateContactsForGroup(groupId: Long, selectedContactIds: List<Long>) {
         val allContactsWithDetails = contactDao.getAllContactsWithDetails()
 
         for (item in allContactsWithDetails) {
             val contactId = item.contact.id
-            val hasTag = item.tags.any { it.id == tagId }
-            val shouldHaveTag = selectedContactIds.contains(contactId)
+            val inGroup = item.contact.groupId == groupId
+            val shouldBeInGroup = selectedContactIds.contains(contactId)
 
-            if (hasTag != shouldHaveTag) {
-                val currentTagIds = item.tags.map { it.id }.toMutableList()
-                if (shouldHaveTag) {
-                    if (targetTag.category != TagCategory.GROUPING) {
-                        val sameCategoryTags = item.tags.filter { it.category == targetTag.category }
-                        currentTagIds.removeAll(sameCategoryTags.map { it.id })
-                    }
-                    if (!currentTagIds.contains(tagId)) {
-                        currentTagIds.add(tagId)
-                    }
-                } else {
-                    currentTagIds.remove(tagId)
-                }
-                updateContact(item.contact, currentTagIds)
+            if (inGroup != shouldBeBeInGroup(inGroup, shouldBeInGroup)) {
+                val updatedContact = item.contact.copy(
+                    groupId = if (shouldBeInGroup) groupId else null
+                )
+                contactDao.updateContact(updatedContact)
             }
         }
     }
 
-    suspend fun syncCallLogs(): Int = callLogTracker.syncCallLogsWithDatabase()
+    private fun shouldBeBeInGroup(inGroup: Boolean, shouldBeInGroup: Boolean): Boolean {
+        return shouldBeInGroup
+    }
+
+    suspend fun syncCallLogsIncremental(): Int = callLogTracker.syncCallLogsIncremental()
+
+    suspend fun syncCallLogs(): Int = callLogTracker.syncCallLogsIncremental()
 
     suspend fun syncContactsAndCallLogs(): com.example.data.sync.SyncResult = callLogTracker.syncContactsAndCallLogs()
 
