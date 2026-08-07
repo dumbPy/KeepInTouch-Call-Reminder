@@ -1,14 +1,15 @@
-# Call Reminder & Contact Relationship Manager — Design Document
+# KeepInTouch: Smart Call Reminder & Relationship Manager — Design Document
 
 ## 1. Executive Summary & Vision
 
-**Call Reminder** is a modern, privacy-focused Android application designed to help users maintain meaningful connections with family, friends, and professional contacts. Instead of relying on rigid calendar events, Call Reminder introduces dynamic, cadence-based reminders driven by actual communication activity.
+**KeepInTouch** is a modern, privacy-focused Android application designed to help users maintain meaningful personal and professional relationships. Unlike standard calendars with rigid alerts, KeepInTouch uses dynamic, cadence-based reminder algorithms powered by actual communications. By integrating directly with the device's system call logs, the application automatically registers contact touchpoints, calculations of due dates, and relative priorities.
 
 ### Core Value Propositions
-- **Automated Communication Sync:** Automatically detects phone calls (incoming and outgoing) via Android's Call Log API, automatically updating contact touchpoints without manual entry.
-- **Single-Setting Tag System:** A flexible tag model where each tag belongs to a specific category and controls exactly **one** setting (e.g., *Group Membership*, *Recurrence Frequency*, or *Default Snooze Duration*).
-- **Comprehensive Interaction History:** Records all historical contact interactions (calls, manual logs, snoozes) in a timeline, allowing future metrics without architectural refactoring.
-- **Daily Agenda & Smart Reminders:** Consolidates pending calls into an actionable daily digest screen featuring intuitive swipe gestures for fast snoozing and logging.
+- **Automated Communication Sync:** Automatically scans local phone call logs (both incoming and outgoing) to record interactions and reset contact timers without requiring manual user input.
+- **Group-Based Cadence Management:** Users organize contacts into specific groups (e.g., *Family*, *Close Friends*, *Work*). Each group establishes a shared default reminder frequency and priority.
+- **Granular Custom Overrides:** Direct, granular control over specific contacts allows users to set a custom snooze duration, custom priority overrides, or specific day-interval overrides.
+- **Safety Deletion Shield:** Group deletions are protected by a timed confirmation modal featuring a progress animation and a 5-second countdown to prevent accidental operations on important contact lists.
+- **Visual-First Layouts:** Leverages Material Design 3 elements, employing colorful status pills, elegant lists, and custom counters to simplify relationship tracking.
 
 ---
 
@@ -18,7 +19,7 @@
 1. **Standard Phone Calls (`READ_CALL_LOG`):**
    - **Mechanism:** A background `WorkManager` job periodically queries `android.provider.CallLog.Calls` for recent call entries matching tracked contact phone numbers.
    - **Real-time Detection:** A `BroadcastReceiver` listens to `TelephonyManager.ACTION_PHONE_STATE_CHANGED` combined with a `ContentObserver` on the CallLog URI to trigger immediate sync when a call completes.
-   - **Interaction Filter:** Only completed calls (duration > 0 seconds) reset contact timers. Missed or rejected calls can be logged as unfulfilled touchpoints without resetting cadence unless configured.
+   - **Interaction Filter:** Only completed calls (duration > 0 seconds) reset contact timers. Missed or rejected calls are logged as unfulfilled touchpoints without resetting cadence unless configured.
 
 2. **Third-Party Messaging & VoIP (WhatsApp, Telegram, Signal):**
    - **Android Constraints:** Standard call logs do not capture third-party VoIP call durations or chat timestamps due to sandbox boundaries.
@@ -44,17 +45,16 @@ The database uses **Room (SQLite)** structured around modern clean architecture 
 
 ```
 +------------------+         +--------------------------+         +---------------------+
-|   ContactEntity  | 1     * |  ContactTagCrossRef      | *     1 |      TagEntity      |
+|   ContactEntity  | 1     * |  ContactTagCrossRef      | *     1 |     GroupEntity     |
 +------------------+---------+--------------------------+---------+---------------------+
 | id (PK)          |         | contactId (FK)           |         | id (PK)             |
 | name             |         | tagId (FK)               |         | name                |
-| phoneNumber      |         +--------------------------+         | category (Enum)     |
-| avatarUri        |                                              | value (SettingVal)  |
+| phoneNumber      |         +--------------------------+         | defaultFreqDays     |
+| avatarUri        |                                              | defaultPriority     |
 | notes            |         +--------------------------+         | colorHex            |
 | createdAt        | 1     * |   InteractionLogEntity   |         +---------------------+
-+------------------+---------+--------------------------+
-                             | id (PK)                  |
-                             | contactId (FK)           |
+| groupId (FK)     |---------| id (PK)                  |
++------------------+         | contactId (FK)           |
                              | timestamp                |
                              | type (CALL_IN/OUT/MANUAL)|
                              | durationSeconds          |
@@ -62,59 +62,65 @@ The database uses **Room (SQLite)** structured around modern clean architecture 
                              +--------------------------+
 ```
 
-### 3.2 Single-Setting Tag Model
+### 3.2 Database Entities
 
-Tags are grouped into strict **Tag Categories**. Each Tag controls **one setting parameter** or attribute:
-
-| Tag Category (`TagCategory`) | Single Purpose | Example Tag Name | Setting Value (`tagValue`) | Color Default |
-| :--- | :--- | :--- | :--- | :--- |
-| **GROUPING** | Categorize contacts visually | `Family`, `Close Friends` | None / Group ID | Blue / Green |
-| **FREQUENCY** | Contact cadence setting | `Weekly`, `Bi-Weekly`, `Monthly` | Days integer (`7`, `14`, `30`) | Purple / Amber |
-| **SNOOZE_DEFAULT** | Custom swipe-snooze duration | `Snooze 1 Day`, `Snooze 3 Days` | Days integer (`1`, `3`) | Teal |
-| **PRIORITY** | Urgency multiplier | `High Priority`, `VIP` | Weight float (`1.5`) | Crimson |
-
-#### Benefits of Single-Setting Decomposition:
-- **No Conflict Matrix:** Eliminates setting ambiguities when a contact has multiple tags. A contact can have one `FREQUENCY` tag (e.g. *Weekly*) and two `GROUPING` tags (*Family*, *VIP*).
-- **Bulk Updates:** Modifying a Tag's frequency value instantly updates cadence calculations for all associated contacts without modifying individual contact entities.
-- **Custom Color Overrides:** Each tag comes with a smart category-default color, but users can customize hex color codes per tag.
-
----
-
-## 4. Historical Interaction Log Architecture
-
-To ensure long-term analytics (e.g., call frequency trends, missed connections, interaction timelines) without future schema migrations:
-
-### 4.1 InteractionLogEntity Schema
+#### GroupEntity Schema
+Defines default cadences and priorities for collections of contacts:
 ```kotlin
-@Entity(
-    tableName = "interaction_logs",
-    foreignKeys = [
-        ForeignKey(
-            entity = ContactEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["contactId"],
-            onDelete = ForeignKey.CASCADE
-        )
-    ],
-    indices = [Index("contactId"), Index("timestamp")]
-)
-data class InteractionLogEntity(
+@Entity(tableName = "groups")
+data class GroupEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val contactId: Long,
-    val timestamp: Long, // Epoch ms
-    val type: InteractionType, // INCOMING_CALL, OUTGOING_CALL, MANUAL_LOG, SNOOZE, WHATSAPP
-    val durationSeconds: Long = 0,
-    val note: String? = null
+    val name: String,
+    val defaultFrequencyDays: Int, // Group-level reminder frequency in days
+    val defaultPriority: Int, // Group-level priority: 1 = Low, 2 = Normal, 3 = High
+    val colorHex: String = "#2196F3"
 )
 ```
 
-### 4.2 Cadence Resolution Algorithm
-When determining if a contact is **Overdue**, **Due Today**, or **Snoozed**:
-1. Find the latest `InteractionLogEntity` of type `INCOMING_CALL`, `OUTGOING_CALL`, or `MANUAL_LOG`.
-2. Find any active `SNOOZE` interaction log (or contact `snoozedUntilTimestamp`).
-3. Effective Last Contact Date = `max(latestInteractionTimestamp, snoozedUntilTimestamp)`.
-4. Resolved Frequency Days = `Contact's FREQUENCY tag value` (defaulting to 14 days if no tag assigned).
-5. Next Due Date = `Effective Last Contact Date + Resolved Frequency Days`.
+#### ContactEntity Schema
+Supports global group assignment along with localized item overrides:
+```kotlin
+@Entity(tableName = "contacts")
+data class ContactEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val systemContactId: Long? = null,
+    val lookupKey: String? = null,
+    val name: String,
+    val phoneNumber: String,
+    val secondaryNumbers: String? = null,
+    val avatarUri: String? = null,
+    val notes: String? = null,
+    val lastCalledTimestamp: Long? = null,
+    val snoozedUntilTimestamp: Long? = null,
+    val customFrequencyDays: Int? = null, // Overrides Group-level default
+    val customPriority: Int? = null, // Overrides Group-level default: 1=Low, 2=Normal, 3=High
+    val groupId: Long? = null, // Foreign Key relation to GroupEntity
+    val createdAt: Long = System.currentTimeMillis()
+)
+```
+
+---
+
+## 4. Cadence Resolution & Algorithms
+
+To calculate when a contact is due and their urgency rank:
+
+### 4.1 Frequency and Priority Resolution
+1. **Resolved Reminder Frequency:**
+   - If the contact has a `customFrequencyDays` override, use that value.
+   - If no override exists but the contact belongs to a Group (`groupId != null`), look up the group's `defaultFrequencyDays`.
+   - If neither exists, default to **14 days**.
+
+2. **Resolved Priority:**
+   - If the contact has a `customPriority` override, use that value (1 = Low, 2 = Normal, 3 = High).
+   - If no override exists but the contact belongs to a Group, look up the group's `defaultPriority`.
+   - If neither exists, default to **2 (Normal)**.
+
+### 4.2 Next Contact Date Calculation
+1. Locate the latest `InteractionLogEntity` of communication type (`INCOMING_CALL`, `OUTGOING_CALL`, or `MANUAL_LOG`).
+2. Locate the active `snoozedUntilTimestamp` of the contact.
+3. **Effective Reference Date** = `max(latestInteractionTimestamp, snoozedUntilTimestamp, creationTimestamp)`.
+4. **Next Due Date** = `Effective Reference Date + Resolved Frequency Days (converted to milliseconds)`.
 
 ---
 
@@ -129,34 +135,40 @@ When determining if a contact is **Overdue**, **Due Today**, or **Snoozed**:
          +-------------------------+-------------------------+
          |                         |                         |
 +--------v-------+        +--------v-------+        +--------v-------+
-|  Contacts List |        | Tag & Settings |        | Contact Detail |
+|  Contacts List |        |   Groups       |        | Contact Detail |
 |  & Call Logs   |        |   Management   |        |   & History    |
 +----------------+        +----------------+        +----------------+
 ```
 
 ### 5.1 Main Dashboard & Daily Agenda
-- **Agenda Card Row Gestures:**
-  - **Swipe Right:** Instantly snoozes contact for 1 day (visual green feedback).
-  - **Swipe Left:** Reveals custom action drawer (3 Days, 1 Week, Pick Date, or Call Now).
-  - **Click Phone Icon:** Direct dialer launch + auto-record callback trigger.
-- **Header Summary:** Shows total pending calls today, overdue count, and current date.
+- Actionable list displaying contacts due for communication.
+- Integrates quick-interaction controls (log call, log WhatsApp, snooze 1-day).
+- Full customizable snooze durations:
+  - Redesigned custom snooze duration interface featuring standalone **Months** and **Days** counters with touch-friendly `-` and `+` buttons to ensure clean grid alignment across various device form factors.
 
-### 5.2 Tag Management Screen
-- Organized by category headers (*Grouping*, *Recurrence Frequency*, *Snooze Defaults*).
-- Tag creation dialog allows name, single setting value, and custom color picker.
+### 5.2 Group Management Screen
+- Displays existing groups in a card-based grid layout.
+- Group statistics: Shows member counts, priority indicators, and frequency settings.
+- **Pill-Based UI Elements:** Displays default frequency and default priority as beautifully colored horizontal Material 3 Pills inside each group card, freeing up visual screen real estate.
+- **Delayed Safety Shield (Group Deletion):**
+  - Group deletion is safeguarded by an animated confirmation dialog.
+  - The confirm button is disabled for **5 seconds** upon opening.
+  - A red **LinearProgressIndicator** moves from left to right, visualizing the lock timer.
+  - Displays remaining countdown (e.g., `3.5s`) for responsive user feedback, preventing accidental data loss.
 
-### 5.3 Contact Detail & Timeline History
-- Complete visual history list showing past incoming/outgoing calls and notes.
-- Assigned tags chip group with quick add/remove.
+### 5.3 Contact Detail Screen
+- Interactive detail panel with complete communication histories and timelines.
+- Reminders configurations are managed via a streamlined **Configure Reminders** modal:
+  - Overrides are selected instantly via horizontal **Priority Pills** (*Default*, *Low*, *Normal*, *High*) arranged in 1 line, avoiding vertical crowding.
+  - Contains an intuitive custom frequency stepper, using increment/decrement buttons and state-aware border colors.
 
 ---
 
-## 6. Implementation Checklist & Tech Stack
+## 6. Technical Stack & Libraries
+- **Framework:** Jetpack Compose (Material Design 3)
+- **Database Persistence:** Room Database + KSP Compiler
+- **Asynchronous Flow:** Kotlin Coroutines & StateFlow
+- **Verification Suite:** Robolectric for local JVM execution & Roborazzi for automated screenshot assertions
 
-- **UI Framework:** Jetpack Compose (Material Design 3)
-- **Local Database:** Room + KSP
-- **Background Sync:** WorkManager + BroadcastReceiver
-- **Architecture:** MVVM + StateFlow + Clean Repository Pattern
-- **Permissions:** `READ_CALL_LOG`, `READ_CONTACTS`, `POST_NOTIFICATIONS`
-
-*This design document serves as the architectural foundation for the Call Reminder application.*
+---
+*This design document serves as the updated source of truth for the KeepInTouch architecture.*
