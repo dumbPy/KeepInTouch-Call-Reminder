@@ -18,7 +18,7 @@ import com.example.data.model.GroupEntity
         GroupEntity::class,
         InteractionLogEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

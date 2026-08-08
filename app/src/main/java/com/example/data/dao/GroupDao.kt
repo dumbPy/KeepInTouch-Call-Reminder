@@ -15,7 +15,7 @@ interface GroupDao {
     @Delete
     suspend fun deleteGroup(group: GroupEntity)
 
-    @Query("SELECT * FROM groups ORDER BY name ASC")
+    @Query("SELECT * FROM groups ORDER BY defaultPriority DESC, name ASC")
     fun getAllGroupsFlow(): Flow<List<GroupEntity>>
 
     @Query("SELECT * FROM groups WHERE id = :id")

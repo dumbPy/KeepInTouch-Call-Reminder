@@ -60,6 +60,7 @@ fun DailyAgendaScreen(
 
     var selectedSnoozeContactId by remember { mutableStateOf<Long?>(null) }
     var selectedLogContactId by remember { mutableStateOf<Long?>(null) }
+    var contactForMultiNumberCall by remember { mutableStateOf<ContactWithDetails?>(null) }
     var showSortDialog by remember { mutableStateOf(false) }
     var showLookaheadMenu by remember { mutableStateOf(false) }
 
@@ -306,10 +307,23 @@ fun DailyAgendaScreen(
                             selectedLogContactId = item.contact.id
                         },
                         onCallPhone = {
-                            val intent = Intent(Intent.ACTION_DIAL).apply {
-                                data = Uri.parse("tel:${item.contact.phoneNumber}")
+                            val allNumbers = item.contact.getAllPhoneNumbers()
+                            val mru = item.contact.mostRecentlyUsedNumber
+                            if (allNumbers.size > 1) {
+                                if (mru != null && com.example.data.sync.SystemContactHelper.isPhoneMatch(item.contact.phoneNumber, mru)) {
+                                    val intent = Intent(Intent.ACTION_DIAL).apply {
+                                        data = Uri.parse("tel:${item.contact.phoneNumber}")
+                                    }
+                                    context.startActivity(intent)
+                                } else {
+                                    contactForMultiNumberCall = item
+                                }
+                            } else {
+                                val intent = Intent(Intent.ACTION_DIAL).apply {
+                                    data = Uri.parse("tel:${item.contact.phoneNumber}")
+                                }
+                                context.startActivity(intent)
                             }
-                            context.startActivity(intent)
                         },
                         onUnsnooze = {
                             viewModel.unsnoozeContact(item.contact.id)
@@ -369,10 +383,23 @@ fun DailyAgendaScreen(
                             selectedLogContactId = item.contact.id
                         },
                         onCallPhone = {
-                            val intent = Intent(Intent.ACTION_DIAL).apply {
-                                data = Uri.parse("tel:${item.contact.phoneNumber}")
+                            val allNumbers = item.contact.getAllPhoneNumbers()
+                            val mru = item.contact.mostRecentlyUsedNumber
+                            if (allNumbers.size > 1) {
+                                if (mru != null && com.example.data.sync.SystemContactHelper.isPhoneMatch(item.contact.phoneNumber, mru)) {
+                                    val intent = Intent(Intent.ACTION_DIAL).apply {
+                                        data = Uri.parse("tel:${item.contact.phoneNumber}")
+                                    }
+                                    context.startActivity(intent)
+                                } else {
+                                    contactForMultiNumberCall = item
+                                }
+                            } else {
+                                val intent = Intent(Intent.ACTION_DIAL).apply {
+                                    data = Uri.parse("tel:${item.contact.phoneNumber}")
+                                }
+                                context.startActivity(intent)
                             }
-                            context.startActivity(intent)
                         },
                         onUnsnooze = {
                             viewModel.unsnoozeContact(item.contact.id)
@@ -664,6 +691,87 @@ fun DailyAgendaScreen(
             }
         )
     }
+
+    // Multi-number select dialog
+    contactForMultiNumberCall?.let { contactWithDetails ->
+        val phoneDetails = remember(contactWithDetails) {
+            SystemContactHelper.fetchPhoneDetailsAndPhoto(
+                context = context,
+                systemContactId = contactWithDetails.contact.systemContactId,
+                lookupKey = contactWithDetails.contact.lookupKey,
+                fallbackPhoneNumber = contactWithDetails.contact.phoneNumber,
+                fallbackSecondaryNumbers = contactWithDetails.contact.secondaryNumbers
+            ).first
+        }
+
+        AlertDialog(
+            onDismissRequest = { contactForMultiNumberCall = null },
+            title = { Text("Select Phone Number") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Which number would you like to call for ${contactWithDetails.contact.name}?")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    phoneDetails.forEach { detail ->
+                        val isMru = contactWithDetails.contact.mostRecentlyUsedNumber != null &&
+                                com.example.data.sync.SystemContactHelper.isPhoneMatch(detail.number, contactWithDetails.contact.mostRecentlyUsedNumber)
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.updateMostRecentlyUsedNumber(contactWithDetails.contact.id, detail.number, context)
+                                    val intent = Intent(Intent.ACTION_DIAL).apply {
+                                        data = Uri.parse("tel:${detail.number}")
+                                    }
+                                    context.startActivity(intent)
+                                    contactForMultiNumberCall = null
+                                }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Call,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = detail.label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (isMru) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "• 🕒 Most Recently Used",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = detail.number,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { contactForMultiNumberCall = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -780,22 +888,15 @@ fun AgendaContactSwipeItem(
                             modifier = Modifier
                                 .size(42.dp)
                                 .clip(CircleShape)
-                                .background(
-                                    if (item.isSnoozed()) WarningAmber.copy(alpha = 0.25f)
-                                    else MaterialTheme.colorScheme.primaryContainer
-                                ),
+                                .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (item.isSnoozed()) {
-                                Icon(Icons.Default.Snooze, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(20.dp))
-                            } else {
-                                Text(
-                                    text = item.contact.name.take(1).uppercase(),
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
+                            Text(
+                                text = item.contact.name.take(1).uppercase(),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
                         }
                     }
 
@@ -821,71 +922,64 @@ fun AgendaContactSwipeItem(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        val lastTime = item.latestTouchpointTimestamp()
-                        Text(
-                            text = if (lastTime != null) "Last call: ${SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(lastTime))}" else "Never called",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
 
-                    Spacer(modifier = Modifier.width(10.dp))
+                        // Status Badges (Standard Due + Cumulative Snooze if snoozed) inline under the name
+                        val isSnoozed = item.isSnoozed()
+                        val stdDays = item.standardDaysUntilDue()
 
-                    // Status Badges (Standard Due + Cumulative Snooze if snoozed)
-                    val isSnoozed = item.isSnoozed()
-                    val stdDays = item.standardDaysUntilDue()
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Standard Due Badge
-                        val stdBadgeColor = if (stdDays <= 0) OverdueRed else MaterialTheme.colorScheme.primary
-                        val stdBadgeText = when {
-                            stdDays < 0 -> "${-stdDays}d overdue"
-                            stdDays == 0 -> "due today"
-                            stdDays == 1 -> "due tomorrow"
-                            else -> "due in ${stdDays}d"
-                        }
-
-                        Surface(
-                            color = stdBadgeColor.copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(8.dp)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = stdBadgeText,
-                                color = stdBadgeColor,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                            )
-                        }
+                            // Standard Due Badge
+                            val stdBadgeColor = if (stdDays <= 0) OverdueRed else MaterialTheme.colorScheme.primary
+                            val stdBadgeText = when {
+                                stdDays < 0 -> "${-stdDays}d overdue"
+                                stdDays == 0 -> "due today"
+                                stdDays == 1 -> "due tomorrow"
+                                else -> "due in ${stdDays}d"
+                            }
 
-                        // Snooze Badge if snoozed
-                        if (isSnoozed) {
-                            val snoozeDays = item.addedSnoozeDays()
                             Surface(
-                                color = WarningAmber.copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(8.dp)
+                                color = stdBadgeColor.copy(alpha = 0.15f),
+                                shape = CircleShape
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                Text(
+                                    text = stdBadgeText,
+                                    color = stdBadgeColor,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+
+                            // Snooze Badge if snoozed
+                            if (isSnoozed) {
+                                val snoozeDays = item.addedSnoozeDays()
+                                Surface(
+                                    color = WarningAmber.copy(alpha = 0.15f),
+                                    shape = CircleShape
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Snooze,
-                                        contentDescription = null,
-                                        tint = WarningAmber,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "${snoozeDays}d",
-                                        color = WarningAmber,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Snooze,
+                                            contentDescription = null,
+                                            tint = WarningAmber,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = "${snoozeDays}d",
+                                            color = WarningAmber,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -930,31 +1024,46 @@ fun AgendaContactSwipeItem(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
                     )
 
-                    Text(
-                        text = "Phone: ${item.contact.phoneNumber}",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    if (item.group != null) {
-                        val groupColor = try {
-                            Color(android.graphics.Color.parseColor(item.group.colorHex))
-                        } catch (e: Exception) {
-                            MaterialTheme.colorScheme.primary
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .background(groupColor.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
                             Text(
-                                text = item.group.name,
-                                color = groupColor,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                text = "Phone: ${item.contact.phoneNumber}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            val lastTime = item.latestTouchpointTimestamp()
+                            Text(
+                                text = if (lastTime != null) "Last call: ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(lastTime))}" else "Never called",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (item.group != null) {
+                            val groupColor = try {
+                                Color(android.graphics.Color.parseColor(item.group.colorHex))
+                            } catch (e: Exception) {
+                                MaterialTheme.colorScheme.primary
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .background(groupColor.copy(alpha = 0.12f), CircleShape)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = item.group.name,
+                                    color = groupColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
 

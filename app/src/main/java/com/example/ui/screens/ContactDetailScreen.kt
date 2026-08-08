@@ -158,6 +158,7 @@ fun ContactDetailScreen(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(8.dp))
                                             .clickable {
+                                                viewModel.updateMostRecentlyUsedNumber(item.contact.id, detail.number, context)
                                                 val intent = Intent(Intent.ACTION_DIAL).apply {
                                                     data = Uri.parse("tel:${detail.number}")
                                                 }
@@ -179,6 +180,41 @@ fun ContactDetailScreen(
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                     }
+                                }
+                            }
+
+                            if (item.contact.systemContactId != null && item.contact.systemContactId > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                TextButton(
+                                    onClick = {
+                                        try {
+                                            val uri = android.content.ContentUris.withAppendedId(
+                                                android.provider.ContactsContract.Contacts.CONTENT_URI,
+                                                item.contact.systemContactId
+                                            )
+                                            val intent = Intent(Intent.ACTION_EDIT).apply {
+                                                data = uri
+                                            }
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
+                                    },
+                                    modifier = Modifier.padding(top = 4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Default.Edit,
+                                        contentDescription = "Edit in System Contacts",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Edit in System Contacts",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                             }
 
@@ -302,8 +338,8 @@ fun ContactDetailScreen(
                                         }
                                         Box(
                                             modifier = Modifier
-                                                .background(groupColor.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-                                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                                .background(groupColor.copy(alpha = 0.15f), CircleShape)
+                                                .padding(horizontal = 10.dp, vertical = 4.dp)
                                         ) {
                                             Text(item.group.name, color = groupColor, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         }

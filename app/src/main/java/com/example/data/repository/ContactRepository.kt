@@ -25,6 +25,9 @@ class ContactRepository(
     fun getContactDetailsFlow(id: Long): Flow<ContactWithDetails?> =
         contactDao.getContactWithDetailsFlow(id)
 
+    suspend fun getContactById(id: Long): ContactEntity? =
+        contactDao.getContactById(id)
+
     fun getContactLogsFlow(contactId: Long): Flow<List<InteractionLogEntity>> =
         interactionLogDao.getLogsForContactFlow(contactId)
 

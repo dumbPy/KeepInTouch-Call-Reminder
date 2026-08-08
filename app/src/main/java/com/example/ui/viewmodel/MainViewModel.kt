@@ -241,6 +241,39 @@ class MainViewModel(private val repository: ContactRepository) : ViewModel() {
         }
     }
 
+    fun updateMostRecentlyUsedNumber(contactId: Long, selectedNumber: String, context: android.content.Context? = null) {
+        viewModelScope.launch {
+            val contact = repository.getContactById(contactId) ?: return@launch
+            val allNumbers = contact.getAllPhoneNumbers()
+            if (allNumbers.contains(selectedNumber)) {
+                val otherNumbers = allNumbers.filter { it != selectedNumber }
+                val newSecondary = if (otherNumbers.isEmpty()) null else otherNumbers.joinToString(",")
+                val updatedContact = contact.copy(
+                    phoneNumber = selectedNumber,
+                    secondaryNumbers = newSecondary,
+                    mostRecentlyUsedNumber = selectedNumber
+                )
+                repository.updateContact(updatedContact)
+
+                if (context != null) {
+                    val hasWritePermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.WRITE_CONTACTS
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                    if (hasWritePermission) {
+                        com.example.data.sync.SystemContactHelper.setSystemContactDefaultPhone(
+                            context = context,
+                            systemContactId = contact.systemContactId,
+                            lookupKey = contact.lookupKey,
+                            phoneNumber = selectedNumber
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun deleteContact(contact: ContactEntity) {
         viewModelScope.launch {
             repository.deleteContact(contact)

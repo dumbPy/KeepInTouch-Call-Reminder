@@ -59,6 +59,8 @@ fun ContactsListScreen(
     val allGroups by viewModel.allGroups.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
+    var contactForMultiNumberCall by remember { mutableStateOf<ContactWithDetails?>(null) }
+
     // Permission launcher for sync
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -267,16 +269,110 @@ fun ContactsListScreen(
                             item = item,
                             onClick = { onContactClick(item.contact.id) },
                             onCallPhone = {
-                                val intent = Intent(Intent.ACTION_DIAL).apply {
-                                    data = Uri.parse("tel:${item.contact.phoneNumber}")
+                                val allNumbers = item.contact.getAllPhoneNumbers()
+                                val mru = item.contact.mostRecentlyUsedNumber
+                                if (allNumbers.size > 1) {
+                                    if (mru != null && com.example.data.sync.SystemContactHelper.isPhoneMatch(item.contact.phoneNumber, mru)) {
+                                        val intent = Intent(Intent.ACTION_DIAL).apply {
+                                            data = Uri.parse("tel:${item.contact.phoneNumber}")
+                                        }
+                                        context.startActivity(intent)
+                                    } else {
+                                        contactForMultiNumberCall = item
+                                    }
+                                } else {
+                                    val intent = Intent(Intent.ACTION_DIAL).apply {
+                                        data = Uri.parse("tel:${item.contact.phoneNumber}")
+                                    }
+                                    context.startActivity(intent)
                                 }
-                                context.startActivity(intent)
                             }
                         )
                     }
                 }
             }
         }
+    }
+
+    // Multi-number select dialog
+    contactForMultiNumberCall?.let { contactWithDetails ->
+        val phoneDetails = remember(contactWithDetails) {
+            SystemContactHelper.fetchPhoneDetailsAndPhoto(
+                context = context,
+                systemContactId = contactWithDetails.contact.systemContactId,
+                lookupKey = contactWithDetails.contact.lookupKey,
+                fallbackPhoneNumber = contactWithDetails.contact.phoneNumber,
+                fallbackSecondaryNumbers = contactWithDetails.contact.secondaryNumbers
+            ).first
+        }
+
+        AlertDialog(
+            onDismissRequest = { contactForMultiNumberCall = null },
+            title = { Text("Select Phone Number") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Which number would you like to call for ${contactWithDetails.contact.name}?")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    phoneDetails.forEach { detail ->
+                        val isMru = contactWithDetails.contact.mostRecentlyUsedNumber != null &&
+                                com.example.data.sync.SystemContactHelper.isPhoneMatch(detail.number, contactWithDetails.contact.mostRecentlyUsedNumber)
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.updateMostRecentlyUsedNumber(contactWithDetails.contact.id, detail.number, context)
+                                    val intent = Intent(Intent.ACTION_DIAL).apply {
+                                        data = Uri.parse("tel:${detail.number}")
+                                    }
+                                    context.startActivity(intent)
+                                    contactForMultiNumberCall = null
+                                }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Call,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = detail.label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (isMru) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "• 🕒 Most Recently Used",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = detail.number,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { contactForMultiNumberCall = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -377,48 +473,61 @@ fun ContactListItemCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (item.group != null) {
-                    val groupColor = try {
-                        Color(android.graphics.Color.parseColor(item.group.colorHex))
-                    } catch (e: Exception) {
-                        MaterialTheme.colorScheme.primary
-                    }
+                if (item.group != null || item.hasFrequencyTracked()) {
                     Spacer(modifier = Modifier.height(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .background(groupColor.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = item.group.name,
-                            color = groupColor,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
+                        if (item.group != null) {
+                            val groupColor = try {
+                                Color(android.graphics.Color.parseColor(item.group.colorHex))
+                            } catch (e: Exception) {
+                                MaterialTheme.colorScheme.primary
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .background(groupColor.copy(alpha = 0.12f), CircleShape)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = item.group.name,
+                                    color = groupColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
 
-                if (item.hasFrequencyTracked()) {
-                    val days = item.daysUntilDue()
-                    val statusText = when {
-                        item.contact.snoozedUntilTimestamp != null && item.contact.snoozedUntilTimestamp > System.currentTimeMillis() -> "Snoozed"
-                        days < 0 -> "${-days}d Overdue"
-                        days == 0 -> "Due Today"
-                        else -> "Due in ${days}d"
-                    }
-                    val statusColor = when {
-                        days < 0 -> OverdueRed
-                        days == 0 -> MaterialTheme.colorScheme.primary
-                        else -> SuccessGreen
-                    }
+                        if (item.hasFrequencyTracked()) {
+                            val days = item.daysUntilDue()
+                            val statusText = when {
+                                item.contact.snoozedUntilTimestamp != null && item.contact.snoozedUntilTimestamp > System.currentTimeMillis() -> "Snoozed"
+                                days < 0 -> "${-days}d Overdue"
+                                days == 0 -> "Due Today"
+                                else -> "Due in ${days}d"
+                            }
+                            val statusColor = when {
+                                item.contact.snoozedUntilTimestamp != null && item.contact.snoozedUntilTimestamp > System.currentTimeMillis() -> MaterialTheme.colorScheme.outline
+                                days < 0 -> OverdueRed
+                                days == 0 -> MaterialTheme.colorScheme.primary
+                                else -> SuccessGreen
+                            }
 
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = statusText,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = statusColor
-                    )
+                            Box(
+                                modifier = Modifier
+                                    .background(statusColor.copy(alpha = 0.12f), CircleShape)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = statusText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = statusColor
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +28,10 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.GroupEntity
 import com.example.data.ui.viewmodel.MainViewModel
 import coil.compose.AsyncImage
+import com.example.ui.theme.OverdueRed
+import com.example.ui.theme.SuccessGreen
+import com.example.data.sync.SystemContactHelper
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,7 +44,7 @@ fun GroupsManagementScreen(
 
     var showAddEditDialog by remember { mutableStateOf(false) }
     var selectedGroupForEdit by remember { mutableStateOf<GroupEntity?>(null) }
-    var groupForMemberManagementId by remember { mutableStateOf<Long?>(null) }
+    var groupForMemberManagementId by rememberSaveable { mutableStateOf<Long?>(null) }
     var groupForDeleteConfirmation by remember { mutableStateOf<GroupEntity?>(null) }
 
     val activeManagedGroup = groups.find { it.id == groupForMemberManagementId }
@@ -61,7 +66,8 @@ fun GroupsManagementScreen(
             onUpdateMembers = { selectedContactIds ->
                 viewModel.updateContactsForGroup(activeManagedGroup.id, selectedContactIds)
                 groupForMemberManagementId = null
-            }
+            },
+            onContactClick = onContactClick
         )
     } else {
         Scaffold(
@@ -506,7 +512,8 @@ fun GroupMemberManagementView(
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onUpdateMembers: (List<Long>) -> Unit
+    onUpdateMembers: (List<Long>) -> Unit,
+    onContactClick: (Long) -> Unit = {}
 ) {
     // We want to keep a local copy of members that are in this group
     val displayedMembers = remember(group.id) {
@@ -515,17 +522,65 @@ fun GroupMemberManagementView(
         }
     }
 
+    // Capture the original member IDs so we can detect real changes
+    val originalMemberIds = remember(group.id) {
+        allContacts.filter { it.contact.groupId == group.id }.map { it.contact.id }.toSet()
+    }
+
     // List of member contact IDs currently marked as deleted (Undo)
     val pendingDeletions = remember { mutableStateListOf<Long>() }
 
     // State to toggle the "Add Members" view
     var showAddMembersView by remember { mutableStateOf(false) }
 
+    val currentOnUpdateMembers by rememberUpdatedState(onUpdateMembers)
+    val currentAllGroups by rememberUpdatedState(allGroups)
+
+    DisposableEffect(group.id) {
+        onDispose {
+            val groupExists = currentAllGroups.any { it.id == group.id }
+            if (groupExists) {
+                val finalMemberIds = displayedMembers
+                    .map { it.contact.id }
+                    .filter { !pendingDeletions.contains(it) }
+                    .toSet()
+                
+                // Only trigger update and notify user if actual membership changed
+                if (finalMemberIds != originalMemberIds) {
+                    currentOnUpdateMembers(finalMemberIds.toList())
+                }
+            }
+        }
+    }
+
+    val syncSelections: (List<Long>) -> Unit = { selectedIds ->
+        pendingDeletions.clear()
+        
+        // Remove from displayedMembers any contact that was NOT originally in the group and is now deselected
+        val toRemove = displayedMembers.filter { item ->
+            !selectedIds.contains(item.contact.id) && !originalMemberIds.contains(item.contact.id)
+        }
+        displayedMembers.removeAll(toRemove)
+        
+        // Add any newly selected contacts to displayedMembers if they aren't already there
+        selectedIds.forEach { id ->
+            if (displayedMembers.none { it.contact.id == id }) {
+                allContacts.find { it.contact.id == id }?.let {
+                    displayedMembers.add(it)
+                }
+            }
+        }
+        
+        // For any contact currently in displayedMembers (which were originally in the group) but NOT in selectedIds, mark them as pendingDeletions
+        displayedMembers.forEach { item ->
+            if (!selectedIds.contains(item.contact.id) && originalMemberIds.contains(item.contact.id)) {
+                pendingDeletions.add(item.contact.id)
+            }
+        }
+    }
+
     BackHandler(enabled = !showAddMembersView) {
-        val finalMemberIds = displayedMembers
-            .map { it.contact.id }
-            .filter { !pendingDeletions.contains(it) }
-        onUpdateMembers(finalMemberIds)
+        onBack()
     }
 
     val themeColor = try {
@@ -542,27 +597,8 @@ fun GroupMemberManagementView(
             allGroups = allGroups,
             initialSelectedIds = displayedMembers.map { it.contact.id }.filter { !pendingDeletions.contains(it) },
             onBack = { showAddMembersView = false },
-            onDone = { selectedIds ->
-                // Sync displayedMembers and pendingDeletions with selectedIds
-                pendingDeletions.clear()
-                
-                // Add any newly selected contacts to displayedMembers if they aren't already there
-                selectedIds.forEach { id ->
-                    if (displayedMembers.none { it.contact.id == id }) {
-                        allContacts.find { it.contact.id == id }?.let {
-                            displayedMembers.add(it)
-                        }
-                    }
-                }
-                
-                // For any contact currently in displayedMembers but NOT in selectedIds, mark them as pendingDeletions
-                displayedMembers.forEach { item ->
-                    if (!selectedIds.contains(item.contact.id)) {
-                        pendingDeletions.add(item.contact.id)
-                    }
-                }
-                
-                showAddMembersView = false
+            onSelectionChanged = { selectedIds ->
+                syncSelections(selectedIds)
             }
         )
     } else {
@@ -596,12 +632,7 @@ fun GroupMemberManagementView(
                     },
                     navigationIcon = {
                         IconButton(
-                            onClick = {
-                                val finalMemberIds = displayedMembers
-                                    .map { it.contact.id }
-                                    .filter { !pendingDeletions.contains(it) }
-                                onUpdateMembers(finalMemberIds)
-                            },
+                            onClick = onBack,
                             modifier = Modifier.testTag("member_mgmt_back_button")
                         ) {
                             Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -710,9 +741,23 @@ fun GroupMemberManagementView(
                         items(displayedMembers, key = { it.contact.id }) { item ->
                             val isDeleted = pendingDeletions.contains(item.contact.id)
                             
+                            val context = LocalContext.current
+                            val (phoneDetails, fetchedPhotoUri) = remember(item) {
+                                SystemContactHelper.fetchPhoneDetailsAndPhoto(
+                                    context = context,
+                                    systemContactId = item.contact.systemContactId,
+                                    lookupKey = item.contact.lookupKey,
+                                    fallbackPhoneNumber = item.contact.phoneNumber,
+                                    fallbackSecondaryNumbers = item.contact.secondaryNumbers
+                                )
+                            }
+                            val displayPhotoUri = item.contact.avatarUri ?: fetchedPhotoUri
+                            
                             Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !isDeleted) { onContactClick(item.contact.id) },
+                                shape = RoundedCornerShape(16.dp),
                                 colors = CardDefaults.cardColors(
                                     containerColor = if (isDeleted) {
                                         MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
@@ -791,62 +836,135 @@ fun GroupMemberManagementView(
                                         }
                                     }
                                 } else {
-                                    // Normal active member card
+                                    // Normal active member card matching ContactListItemCard styling and contents
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                            .padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            // Avatar circle
-                                            val displayPhotoUri = item.contact.avatarUri
-                                            if (!displayPhotoUri.isNullOrBlank()) {
-                                                AsyncImage(
-                                                    model = displayPhotoUri,
-                                                    contentDescription = "${item.contact.name} avatar",
-                                                    modifier = Modifier
-                                                        .size(40.dp)
-                                                        .clip(CircleShape),
-                                                    contentScale = ContentScale.Crop
-                                                )
-                                            } else {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(40.dp)
-                                                        .clip(CircleShape)
-                                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        text = item.contact.name.take(1).uppercase(),
-                                                        fontSize = 16.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
-                                                }
-                                            }
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                            Column {
+                                        if (!displayPhotoUri.isNullOrBlank()) {
+                                            AsyncImage(
+                                                model = displayPhotoUri,
+                                                contentDescription = "${item.contact.name} avatar",
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(CircleShape),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(CircleShape)
+                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
                                                 Text(
-                                                    text = item.contact.name,
-                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    text = item.contact.name.take(1).uppercase(),
+                                                    fontSize = 20.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Text(
-                                                    text = item.contact.phoneNumber,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    color = MaterialTheme.colorScheme.primary
                                                 )
                                             }
                                         }
-                                        
+
+                                        Spacer(modifier = Modifier.width(16.dp))
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = item.contact.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 16.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
+                                                )
+                                                if (item.resolvedPriority() == 3) {
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Icon(
+                                                        imageVector = Icons.Default.Star,
+                                                        contentDescription = "High Priority",
+                                                        tint = Color(0xFFFFC107),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                            
+                                            val primaryDetail = phoneDetails.firstOrNull()
+                                            val phoneDisplayText = if (phoneDetails.size > 1 && primaryDetail != null) {
+                                                "${primaryDetail.label}: ${primaryDetail.number}  •  +${phoneDetails.size - 1} more"
+                                            } else if (primaryDetail != null) {
+                                                "${primaryDetail.label}: ${primaryDetail.number}"
+                                            } else {
+                                                item.contact.phoneNumber
+                                            }
+
+                                            Text(
+                                                text = phoneDisplayText,
+                                                fontSize = 13.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+
+                                            if (item.group != null || item.hasFrequencyTracked()) {
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    if (item.group != null) {
+                                                        val groupColor = try {
+                                                            Color(android.graphics.Color.parseColor(item.group.colorHex))
+                                                        } catch (e: Exception) {
+                                                            MaterialTheme.colorScheme.primary
+                                                        }
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .background(groupColor.copy(alpha = 0.12f), CircleShape)
+                                                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = item.group.name,
+                                                                color = groupColor,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        }
+                                                    }
+
+                                                    if (item.hasFrequencyTracked()) {
+                                                        val days = item.daysUntilDue()
+                                                        val statusText = when {
+                                                            item.contact.snoozedUntilTimestamp != null && item.contact.snoozedUntilTimestamp > System.currentTimeMillis() -> "Snoozed"
+                                                            days < 0 -> "${-days}d Overdue"
+                                                            days == 0 -> "Due Today"
+                                                            else -> "Due in ${days}d"
+                                                        }
+                                                        val statusColor = when {
+                                                            item.contact.snoozedUntilTimestamp != null && item.contact.snoozedUntilTimestamp > System.currentTimeMillis() -> MaterialTheme.colorScheme.outline
+                                                            days < 0 -> OverdueRed
+                                                            days == 0 -> MaterialTheme.colorScheme.primary
+                                                            else -> SuccessGreen
+                                                        }
+
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .background(statusColor.copy(alpha = 0.12f), CircleShape)
+                                                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = statusText,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = statusColor
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         IconButton(
                                             onClick = { pendingDeletions.add(item.contact.id) },
                                             modifier = Modifier.testTag("remove_member_button_${item.contact.id}")
@@ -876,7 +994,7 @@ fun AddMembersView(
     allGroups: List<GroupEntity>,
     initialSelectedIds: List<Long>,
     onBack: () -> Unit,
-    onDone: (List<Long>) -> Unit
+    onSelectionChanged: (List<Long>) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
 
@@ -887,7 +1005,7 @@ fun AddMembersView(
     }
 
     BackHandler {
-        onDone(selectedContactIds.toList())
+        onBack()
     }
 
     // Filter contacts based on query
@@ -918,7 +1036,7 @@ fun AddMembersView(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { onDone(selectedContactIds.toList()) }) {
+                    IconButton(onClick = { onBack() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -992,6 +1110,7 @@ fun AddMembersView(
                                                 selectedContactIds.add(m.contact.id)
                                             }
                                         }
+                                        onSelectionChanged(selectedContactIds.toList())
                                         // Clear filter
                                         searchQuery = ""
                                     }
@@ -1070,9 +1189,21 @@ fun AddMembersView(
                     items(filteredContacts, key = { it.contact.id }) { item ->
                         val isSelected = selectedContactIds.contains(item.contact.id)
                         
+                        val context = LocalContext.current
+                        val (phoneDetails, fetchedPhotoUri) = remember(item) {
+                            SystemContactHelper.fetchPhoneDetailsAndPhoto(
+                                context = context,
+                                systemContactId = item.contact.systemContactId,
+                                lookupKey = item.contact.lookupKey,
+                                fallbackPhoneNumber = item.contact.phoneNumber,
+                                fallbackSecondaryNumbers = item.contact.secondaryNumbers
+                            )
+                        }
+                        val displayPhotoUri = item.contact.avatarUri ?: fetchedPhotoUri
+                        
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(16.dp),
                             colors = CardDefaults.cardColors(
                                 containerColor = if (isSelected) {
                                     MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
@@ -1081,7 +1212,7 @@ fun AddMembersView(
                                 }
                             ),
                             border = BorderStroke(
-                                width = if (isSelected) 1.dp else 0.5.dp,
+                                width = if (isSelected) 1.5.dp else 0.5.dp,
                                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
                             )
                         ) {
@@ -1094,107 +1225,152 @@ fun AddMembersView(
                                         } else {
                                             selectedContactIds.add(item.contact.id)
                                         }
+                                        onSelectionChanged(selectedContactIds.toList())
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
+                                // Avatar circle with tick overlay or replacement when selected
+                                Box(
+                                    modifier = Modifier.size(48.dp),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    // Avatar circle with tick overlay or replacement when selected
-                                    Box(
-                                        modifier = Modifier.size(42.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (isSelected) {
-                                            // Show elegant green/primary circle with tick mark
+                                    if (isSelected) {
+                                        // Show elegant green/primary circle with tick mark
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primary),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    } else {
+                                        // Show regular avatar
+                                        if (!displayPhotoUri.isNullOrBlank()) {
+                                            AsyncImage(
+                                                model = displayPhotoUri,
+                                                contentDescription = "${item.contact.name} avatar",
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .clip(CircleShape),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        } else {
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxSize()
                                                     .clip(CircleShape)
-                                                    .background(MaterialTheme.colorScheme.primary),
+                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Check,
-                                                    contentDescription = "Selected",
-                                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                                    modifier = Modifier.size(24.dp)
+                                                Text(
+                                                    text = item.contact.name.take(1).uppercase(),
+                                                    fontSize = 20.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
                                                 )
-                                            }
-                                        } else {
-                                            // Show regular avatar
-                                            val displayPhotoUri = item.contact.avatarUri
-                                            if (!displayPhotoUri.isNullOrBlank()) {
-                                                AsyncImage(
-                                                    model = displayPhotoUri,
-                                                    contentDescription = "${item.contact.name} avatar",
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .clip(CircleShape),
-                                                    contentScale = ContentScale.Crop
-                                                )
-                                            } else {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .clip(CircleShape)
-                                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        text = item.contact.name.take(1).uppercase(),
-                                                        fontSize = 16.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
-                                                }
                                             }
                                         }
                                     }
-                                    
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    
-                                    Column {
+                                }
+                                
+                                Spacer(modifier = Modifier.width(16.dp))
+                                
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             text = item.contact.name,
-                                            style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false),
                                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                         )
-                                        Text(
-                                            text = item.contact.phoneNumber,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        
-                                        // Show existing group info if any
-                                        if (item.contact.groupId != null) {
-                                            val contactGroup = allGroups.find { it.id == item.contact.groupId }
-                                            if (contactGroup != null) {
-                                                val cGroupColor = try {
-                                                    Color(android.graphics.Color.parseColor(contactGroup.colorHex))
+                                        if (item.resolvedPriority() == 3) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(
+                                                imageVector = Icons.Default.Star,
+                                                contentDescription = "High Priority",
+                                                tint = Color(0xFFFFC107),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    
+                                    val primaryDetail = phoneDetails.firstOrNull()
+                                    val phoneDisplayText = if (phoneDetails.size > 1 && primaryDetail != null) {
+                                        "${primaryDetail.label}: ${primaryDetail.number}  •  +${phoneDetails.size - 1} more"
+                                    } else if (primaryDetail != null) {
+                                        "${primaryDetail.label}: ${primaryDetail.number}"
+                                    } else {
+                                        item.contact.phoneNumber
+                                    }
+
+                                    Text(
+                                        text = phoneDisplayText,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    
+                                    if (item.group != null || item.hasFrequencyTracked()) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (item.group != null) {
+                                                val groupColor = try {
+                                                    Color(android.graphics.Color.parseColor(item.group.colorHex))
                                                 } catch (e: Exception) {
                                                     MaterialTheme.colorScheme.primary
                                                 }
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.padding(top = 2.dp)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .background(groupColor.copy(alpha = 0.12f), CircleShape)
+                                                        .padding(horizontal = 10.dp, vertical = 4.dp)
                                                 ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(8.dp)
-                                                            .clip(CircleShape)
-                                                            .background(cGroupColor)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
                                                     Text(
-                                                        text = if (item.contact.groupId == group.id) "Already in this group" else "In group: ${contactGroup.name}",
-                                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = if (item.contact.groupId == group.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                                        text = item.group.name,
+                                                        color = groupColor,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+
+                                            if (item.hasFrequencyTracked()) {
+                                                val days = item.daysUntilDue()
+                                                val statusText = when {
+                                                    item.contact.snoozedUntilTimestamp != null && item.contact.snoozedUntilTimestamp > System.currentTimeMillis() -> "Snoozed"
+                                                    days < 0 -> "${-days}d Overdue"
+                                                    days == 0 -> "Due Today"
+                                                    else -> "Due in ${days}d"
+                                                }
+                                                val statusColor = when {
+                                                    item.contact.snoozedUntilTimestamp != null && item.contact.snoozedUntilTimestamp > System.currentTimeMillis() -> MaterialTheme.colorScheme.outline
+                                                    days < 0 -> OverdueRed
+                                                    days == 0 -> MaterialTheme.colorScheme.primary
+                                                    else -> SuccessGreen
+                                                }
+
+                                                Box(
+                                                    modifier = Modifier
+                                                        .background(statusColor.copy(alpha = 0.12f), CircleShape)
+                                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = statusText,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = statusColor
                                                     )
                                                 }
                                             }

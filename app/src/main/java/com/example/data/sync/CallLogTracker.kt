@@ -388,10 +388,26 @@ class CallLogTracker(
                     // ONLY connected calls (duration > 0) count as contact touchpoint and reset counter
                     if (isConnectedCall) {
                         if (contact.lastCalledTimestamp == null || callTime > contact.lastCalledTimestamp) {
+                            val matchedNumber = contact.getAllPhoneNumbers().find { num ->
+                                isPhoneMatch(num, rawNumber)
+                            } ?: rawNumber
                             contactDao.updateContact(
                                 contact.copy(
                                     lastCalledTimestamp = callTime,
-                                    snoozedUntilTimestamp = null // Reset snooze on connected call!
+                                    snoozedUntilTimestamp = null, // Reset snooze on connected call!
+                                    mostRecentlyUsedNumber = matchedNumber
+                                )
+                            )
+                        }
+                    } else {
+                        // Even if not connected, update mostRecentlyUsedNumber if it's the latest log event
+                        if (contact.lastCalledTimestamp == null || callTime > contact.lastCalledTimestamp) {
+                            val matchedNumber = contact.getAllPhoneNumbers().find { num ->
+                                isPhoneMatch(num, rawNumber)
+                            } ?: rawNumber
+                            contactDao.updateContact(
+                                contact.copy(
+                                    mostRecentlyUsedNumber = matchedNumber
                                 )
                             )
                         }

@@ -18,6 +18,7 @@ data class ContactEntity(
     val customFrequencyDays: Int? = null, // Override or custom frequency (in days)
     val customPriority: Int? = null, // Override priority: 1=Low, 2=Normal, 3=High
     val groupId: Long? = null, // Group association
+    val mostRecentlyUsedNumber: String? = null, // Track most recently used phone number
     val createdAt: Long = System.currentTimeMillis()
 ) {
     /**

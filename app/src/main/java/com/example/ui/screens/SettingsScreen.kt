@@ -64,6 +64,12 @@ fun SettingsScreen(
         )
     }
 
+    var writeContactsPermissionGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CONTACTS) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
     var notificationsPermissionGranted by remember {
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -75,11 +81,18 @@ fun SettingsScreen(
     val allPermissionsGranted = callLogPermissionGranted && contactsPermissionGranted && notificationsPermissionGranted
     var isPermissionsExpanded by remember { mutableStateOf(!allPermissionsGranted) }
 
+    LaunchedEffect(allPermissionsGranted) {
+        if (allPermissionsGranted) {
+            isPermissionsExpanded = false
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         callLogPermissionGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED
         contactsPermissionGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+        writeContactsPermissionGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CONTACTS) == PackageManager.PERMISSION_GRANTED
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationsPermissionGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         }
@@ -166,7 +179,7 @@ fun SettingsScreen(
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text(
-                                        text = if (allPermissionsGranted) "All Granted" else "Needs Action",
+                                        text = if (allPermissionsGranted) "Granted" else "Needs Action",
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (allPermissionsGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
@@ -319,6 +332,44 @@ fun SettingsScreen(
                                             }
                                         )
                                     }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Write Contacts Permission (Optional)
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            if (!writeContactsPermissionGranted) {
+                                                permissionLauncher.launch(arrayOf(Manifest.permission.WRITE_CONTACTS))
+                                            } else {
+                                                openSystemAppSettings()
+                                            }
+                                        },
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                ) {
+                                    ListItem(
+                                        headlineContent = { Text("Write Contacts (Optional)", fontWeight = FontWeight.SemiBold) },
+                                        supportingContent = { Text("WRITE_CONTACTS — Optional. Updates preferred/default numbers back in system Contacts.") },
+                                        trailingContent = {
+                                            if (writeContactsPermissionGranted) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Default.CheckCircle, contentDescription = "Granted", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Granted", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.WRITE_CONTACTS)) },
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text("Grant", fontSize = 12.sp)
+                                                }
+                                            }
+                                        }
+                                    )
                                 }
                             }
                         }
