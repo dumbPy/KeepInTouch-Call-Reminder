@@ -83,6 +83,9 @@ fun SettingsScreen(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationsPermissionGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         }
+        if (contactsPermissionGranted) {
+            viewModel.syncFullContactsAndCallLogs()
+        }
     }
 
     fun openSystemAppSettings() {

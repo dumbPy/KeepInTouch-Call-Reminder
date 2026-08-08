@@ -499,12 +499,18 @@ fun ContactDetailScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { selectedGroupId = null }
+                                .clickable { 
+                                    selectedGroupId = null 
+                                    customFreqDays = null
+                                }
                                 .padding(vertical = 4.dp)
                         ) {
                             RadioButton(
                                 selected = selectedGroupId == null,
-                                onClick = { selectedGroupId = null }
+                                onClick = { 
+                                    selectedGroupId = null 
+                                    customFreqDays = null
+                                }
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("No Group (Not Scheduled)", fontSize = 14.sp)
@@ -517,32 +523,107 @@ fun ContactDetailScreen(
                             } catch (e: Exception) {
                                 MaterialTheme.colorScheme.primary
                             }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { selectedGroupId = group.id }
+                                    .clickable { 
+                                        selectedGroupId = group.id 
+                                        customFreqDays = null
+                                    }
                                     .padding(vertical = 4.dp)
                             ) {
-                                RadioButton(
-                                    selected = selectedGroupId == group.id,
-                                    onClick = { selectedGroupId = group.id }
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .size(12.dp)
-                                        .clip(CircleShape)
-                                        .background(gColor)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(group.name, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("(${group.defaultFrequencyDays}d, Priority: " + when(group.defaultPriority) {
-                                    1 -> "Low"
-                                    3 -> "High"
-                                    else -> "Normal"
-                                } + ")", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    RadioButton(
+                                        selected = selectedGroupId == group.id,
+                                        onClick = { 
+                                            selectedGroupId = group.id 
+                                            customFreqDays = null
+                                        }
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .clip(CircleShape)
+                                            .background(gColor)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(group.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                
+                                // Group level frequency & priority pills shown under each group name
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(start = 48.dp, bottom = 4.dp)
+                                ) {
+                                    // Frequency Pill
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f),
+                                        border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Refresh,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(10.dp),
+                                                tint = MaterialTheme.colorScheme.secondary
+                                            )
+                                            Text(
+                                                text = "${group.defaultFrequencyDays}d",
+                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                            )
+                                        }
+                                    }
+
+                                    // Priority Pill
+                                    val priorityColor = when (group.defaultPriority) {
+                                        1 -> MaterialTheme.colorScheme.outline
+                                        3 -> Color(0xFFFFC107)
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+                                    val priorityLabel = when (group.defaultPriority) {
+                                        1 -> "Low"
+                                        3 -> "High"
+                                        else -> "Normal"
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = priorityColor.copy(alpha = 0.15f),
+                                        border = androidx.compose.foundation.BorderStroke(0.5.dp, priorityColor.copy(alpha = 0.4f))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            if (group.defaultPriority == 3) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Star,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(10.dp),
+                                                    tint = priorityColor
+                                                )
+                                            }
+                                            Text(
+                                                text = priorityLabel,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (group.defaultPriority == 3) MaterialTheme.colorScheme.onSurface else priorityColor
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -560,7 +641,9 @@ fun ContactDetailScreen(
                             val selectedGroup = allGroups.find { it.id == selectedGroupId }
                             val groupFreq = selectedGroup?.defaultFrequencyDays ?: 14
                             
-                            IconButton(
+                            // Decrease Button as a clean Surface
+                            val canDecrease = customFreqDays != null
+                            Surface(
                                 onClick = {
                                     val current = customFreqDays
                                     if (current != null) {
@@ -571,19 +654,19 @@ fun ContactDetailScreen(
                                         }
                                     }
                                 },
-                                enabled = customFreqDays != null,
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(
-                                        color = if (customFreqDays != null) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                                        shape = RoundedCornerShape(12.dp)
-                                    )
+                                enabled = canDecrease,
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (canDecrease) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                                modifier = Modifier.size(40.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Remove,
-                                    contentDescription = "Decrease Frequency",
-                                    tint = if (customFreqDays != null) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                                )
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Remove,
+                                        contentDescription = "Decrease Frequency",
+                                        tint = if (canDecrease) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                             
                             Surface(
@@ -614,7 +697,8 @@ fun ContactDetailScreen(
                                 }
                             }
                             
-                            IconButton(
+                            // Increase Button as a clean Surface
+                            Surface(
                                 onClick = {
                                     val current = customFreqDays
                                     if (current == null) {
@@ -623,18 +707,18 @@ fun ContactDetailScreen(
                                         customFreqDays = current + 1
                                     }
                                 },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.secondaryContainer,
-                                        shape = RoundedCornerShape(12.dp)
-                                    )
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier.size(40.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = "Increase Frequency",
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "Increase Frequency",
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -656,15 +740,14 @@ fun ContactDetailScreen(
                             ).forEach { (valLevel, valLabel) ->
                                 val selected = customPriority == valLevel
                                 Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .clickable { customPriority = valLevel },
+                                    onClick = { customPriority = valLevel },
+                                    shape = RoundedCornerShape(16.dp),
                                     color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     border = androidx.compose.foundation.BorderStroke(
                                         width = 1.dp,
                                         color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-                                    )
+                                    ),
+                                    modifier = Modifier.weight(1f)
                                 ) {
                                     Box(
                                         contentAlignment = Alignment.Center,

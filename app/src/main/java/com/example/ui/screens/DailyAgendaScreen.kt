@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.animateColorAsState
@@ -43,7 +44,7 @@ import com.example.ui.theme.WarningAmber
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun DailyAgendaScreen(
     viewModel: MainViewModel,
@@ -293,6 +294,7 @@ fun DailyAgendaScreen(
                 ) { item ->
                     AgendaContactSwipeItem(
                         item = item,
+                        modifier = Modifier.animateItemPlacement(),
                         onClick = { onContactClick(item.contact.id) },
                         onQuickSnooze = { days ->
                             viewModel.snoozeContact(item.contact.id, days)
@@ -355,6 +357,7 @@ fun DailyAgendaScreen(
                 ) { item ->
                     AgendaContactSwipeItem(
                         item = item,
+                        modifier = Modifier.animateItemPlacement(),
                         onClick = { onContactClick(item.contact.id) },
                         onQuickSnooze = { days ->
                             viewModel.snoozeContact(item.contact.id, days)
@@ -672,7 +675,8 @@ fun AgendaContactSwipeItem(
     onOpenSnoozeOptions: () -> Unit,
     onLogTouchpoint: () -> Unit,
     onCallPhone: () -> Unit,
-    onUnsnooze: (() -> Unit)? = null
+    onUnsnooze: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(false) }
 
@@ -711,6 +715,7 @@ fun AgendaContactSwipeItem(
 
     SwipeToDismissBox(
         state = dismissState,
+        modifier = modifier,
         backgroundContent = {
             val color by animateColorAsState(
                 when (dismissState.dismissDirection) {

@@ -62,8 +62,13 @@ fun ContactsListScreen(
     // Permission launcher for sync
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
-        viewModel.syncCallLogs()
+    ) { permissions ->
+        val hasContacts = permissions[Manifest.permission.READ_CONTACTS] == true
+        if (hasContacts) {
+            viewModel.syncFullContactsAndCallLogs()
+        } else {
+            viewModel.syncCallLogs()
+        }
     }
 
     // Launcher for System Contacts ACTION_INSERT
@@ -76,7 +81,7 @@ fun ContactsListScreen(
         // Automatically sync system contacts into Room database
         val hasContacts = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
         if (hasContacts) {
-            viewModel.syncCallLogs()
+            viewModel.syncFullContactsAndCallLogs()
         } else {
             permissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.READ_CALL_LOG))
         }
@@ -93,7 +98,7 @@ fun ContactsListScreen(
                 )
             )
         } else {
-            viewModel.syncCallLogs()
+            viewModel.syncFullContactsAndCallLogs()
         }
     }
 

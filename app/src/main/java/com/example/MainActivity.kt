@@ -85,6 +85,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                LaunchedEffect(hasContactsPermission) {
+                    if (hasContactsPermission) {
+                        viewModel.syncFullContactsAndCallLogs()
+                    }
+                }
+
                 val navController = rememberNavController()
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
@@ -213,7 +219,10 @@ class MainActivity : ComponentActivity() {
 
                         composable(Screen.Groups.route) {
                             GroupsManagementScreen(
-                                viewModel = viewModel
+                                viewModel = viewModel,
+                                onContactClick = { contactId ->
+                                    navController.navigate(Screen.ContactDetail.createRoute(contactId))
+                                }
                             )
                         }
 
